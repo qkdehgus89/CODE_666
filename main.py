@@ -62,6 +62,7 @@ WARNING_LIMIT = int(os.getenv("WARNING_LIMIT", "10"))
 CURRENCY_NAME = os.getenv("CURRENCY_NAME", "코인").strip()
 BOT_VERSION = "sns-flowerbot-v10.6"
 BOT_USER_ID = os.getenv("BOT_USER_ID", "").strip()
+ECONOMY_FEATURE_ENABLED = False
 
 # 1코인 = 10포인트, 0.2코인 = 2포인트
 COIN_SCALE = 10
@@ -157,8 +158,61 @@ def is_operator_command(text):
     return text in exact_commands or any(text.startswith(prefix) for prefix in prefix_commands)
 
 
+def is_enabled_operator_command(text):
+    if not text:
+        return False
+
+    exact_commands = {
+        "/운영명령어",
+        "/전체유저",
+        "/족보입력",
+        "/족보",
+        "/완전삭제",
+        "/삭제유저",
+    }
+    prefix_commands = [
+        "/유저검색 ",
+        "/유저상세 ",
+        "/닉삭제",
+        "/닉삭제번호",
+        "/삭제복구",
+        "/마디수 ",
+    ]
+    return text in exact_commands or any(text.startswith(prefix) for prefix in prefix_commands)
+
+
 def operator_only_warning():
     return "이 명령어는 운영진만 사용할 수 있어요."
+
+
+def economy_disabled_text():
+    return "이 기능은 현재 사용하지 않아요.\n\nCODE_666에서는 코인, 상점, 가챠, 럭키드로우 기능을 제외하고 운영합니다."
+
+
+def is_economy_command(text):
+    if not text:
+        return False
+
+    exact_commands = {
+        "/미션", "/수령", "/회생", "/잔액", "/내보유", "/내보유 미사용", "/내보유 사용",
+        "/코인내역", "/코인랭킹", "/랭킹 코인",
+        "/상점", "/가챠", "/가챠시스템", "/가챠횟수", "/상가챠", "/중가챠", "/하가챠",
+        "/조각가챠", "/조각", "/대장장이", "/김미트상가챠", "/조각정리",
+        "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
+        "/럭키정산", "/럭키초기화", "/럭키현황전체",
+        "/경제현황", "/회생초기화", "/코인검증", "/정산검증",
+        "/유저아이템보유", "/유저아이템삭제",
+    }
+    prefix_commands = [
+        "/단벙참여 ", "/단벙참석 ",
+        "/지급 ", "/차감 ", "/코인내역 ", "/코인검증 ",
+        "/회생초기화 ", "/구매 ", "/가챠 ",
+        "/상품추가 ", "/상품등록 ", "/상품삭제 ",
+        "/사용 ", "/사용처리 ", "/구매취소 ",
+        "/아이템지급 ", "/아이템삭제 ", "/유저아이템삭제 ",
+    ]
+
+    return text in exact_commands or any(text.startswith(prefix) for prefix in prefix_commands)
 
 
 def count_source_ids():
@@ -1309,6 +1363,82 @@ def simplified_command_text(text):
     args = parts[1:]
     rest = " ".join(args).strip()
 
+    exact_aliases = {
+        "/도움말": "/명령어",
+        "/메뉴": "/명령어",
+        "/명령": "/명령어",
+        "/명": "/명령어",
+        "/운영": "/운영명령어",
+        "/운영도움말": "/운영명령어",
+        "/운영명령": "/운영명령어",
+        "/운영명": "/운영명령어",
+        "/운명": "/운영명령어",
+        "/ㅁㅅ": "/미션",
+        "/받기": "/수령",
+        "/보상": "/수령",
+        "/ㅎㅅ": "/회생",
+        "/돈": "/잔액",
+        "/코인": "/잔액",
+        "/보유": "/내보유",
+        "/아이템": "/내보유",
+        "/미사용": "/내보유 미사용",
+        "/사용완료": "/내보유 사용",
+        "/업적확인": "/업적",
+        "/인기": "/인기인",
+        "/오늘인기": "/인기인",
+        "/주간인기": "/주간인기인",
+        "/설렘현황": "/설렘픽현황",
+        "/설렘랭킹": "/설렘픽랭킹",
+        "/픽현황": "/설렘픽현황",
+        "/픽랭킹": "/설렘픽랭킹",
+        "/ㅅㄹ현황": "/설렘픽현황",
+        "/ㅅㄹ랭킹": "/설렘픽랭킹",
+        "/케확": "/케미확인",
+        "/케미현황": "/케미확인",
+        "/ㅋㅁ확인": "/케미확인",
+        "/진실초기화": "/진실게임초기화",
+        "/진실리셋": "/진실게임초기화",
+        "/진실목록": "/진실목록",
+        "/마확": "/마니또확인",
+        "/마변": "/마니또변경",
+        "/마보상": "/마니또보상",
+        "/주간": "/주간랭킹",
+        "/전체": "/전체순위",
+        "/코인랭킹": "/코인랭킹",
+        "/인기랭킹": "/인기인",
+        "/럭키현황": "/럭키드로우현황",
+        "/럭키구매": "/럭키드로우구매",
+        "/럭키결과": "/럭키드로우결과",
+        "/상가챠": "/상가챠",
+        "/중가챠": "/중가챠",
+        "/하가챠": "/하가챠",
+    }
+    if text in exact_aliases:
+        return exact_aliases[text]
+
+    prefix_aliases = {
+        "/보유 ": "/내보유 ",
+        "/아이템 ": "/내보유 ",
+        "/언급 ": "/언급랭킹 ",
+        "/픽 ": "/설렘픽 ",
+        "/ㅅㄹ ": "/설렘픽 ",
+        "/ㅋㅁ ": "/케미 ",
+        "/답 ": "/진실답변 ",
+        "/지급 ": "/지급 ",
+        "/차감 ": "/차감 ",
+        "/유저 ": "/유저검색 ",
+        "/상세 ": "/유저상세 ",
+        "/아이템지급 ": "/아이템지급 ",
+        "/아이템삭제 ": "/유저아이템삭제 ",
+        "/상품추가 ": "/상품추가 ",
+        "/상품등록 ": "/상품등록 ",
+        "/상품삭제 ": "/상품삭제 ",
+        "/구매 ": "/구매 ",
+    }
+    for prefix, mapped_prefix in prefix_aliases.items():
+        if text.startswith(prefix):
+            return mapped_prefix + text[len(prefix):].strip()
+
     if command == "/내정보":
         if not args:
             return "/내정보"
@@ -1418,40 +1548,10 @@ def simplified_command_text(text):
         operator_aliases = {
             "명령어": "/운영명령어",
             "도움말": "/운영명령어",
-            "지급": "/지급",
-            "차감": "/차감",
-            "코인내역": "/코인내역",
-            "코인검증": "/코인검증",
-            "경제현황": "/경제현황",
             "유저검색": "/유저검색",
             "유저상세": "/유저상세",
-            "아이템지급": "/아이템지급",
-            "아이템보유": "/유저아이템보유",
-            "유저아이템보유": "/유저아이템보유",
-            "아이템삭제": "/유저아이템삭제",
-            "유저아이템삭제": "/유저아이템삭제",
-            "정산검증": "/정산검증",
-            "정산": "/정산검증",
-            "오류": "/최근오류",
-            "최근오류": "/최근오류",
-            "DB상태": "/DB상태",
-            "디비상태": "/DB상태",
-            "수집상태": "/수집상태",
-            "최근로그": "/최근로그",
-            "수집누락": "/수집누락",
-            "경고": "/경고",
-            "경고누적일": "/경고누적일",
             "마디수": "/마디수",
-            "단벙참여확인": "/단벙참여확인",
-            "설렘픽정산": "/설렘픽정산",
-            "설렘픽초기화": "/설렘픽초기화",
-            "럭키정산": "/럭키정산",
-            "럭키초기화": "/럭키초기화",
-            "럭키현황": "/럭키현황전체",
-            "회생초기화": "/회생초기화",
             "전체유저": "/전체유저",
-            "방정보": "/방정보",
-            "버전": "/버전",
         }
         mapped = operator_aliases.get(sub)
         if not mapped:
@@ -1463,9 +1563,6 @@ def simplified_command_text(text):
 
 def user_summary_text(user_id, user_name):
     try:
-        rows = list_user_purchases(user_id, limit=None)
-        owned = len([row for row in rows if row["status"] in ("owned", "pending")])
-        used = len([row for row in rows if row["status"] in ("used", "done")])
         best_name, best_score = get_best_affinity(user_id)
         best_line = f"{best_name} ({best_score})" if best_name else "기록 없음"
 
@@ -1473,17 +1570,12 @@ def user_summary_text(user_id, user_name):
             "👤 내정보",
             "",
             f"대상: {user_name}",
-            f"💰 보유 코인: {coin_text(get_balance(user_id))}",
-            f"🎁 미사용 아이템: {owned}개",
-            f"📦 사용완료 아이템: {used}개",
             f"📅 출석: {get_attendance_count(user_id)}일",
             f"🏆 업적: {get_achievement_count(user_id)}개",
             f"💕 최고 친밀도: {best_line}",
             "",
             "자세히 보기",
-            "/내정보 보유",
             "/내정보 업적",
-            "/내정보 코인",
         ])
     except Exception as e:
         log_error("USER_SUMMARY_ERROR", e)
@@ -1491,211 +1583,24 @@ def user_summary_text(user_id, user_name):
 
 
 def user_commands_text():
-    return """🤖 S.N.S 꽃봇 명령어
+    return """🤖 S.N.S 꽃봇 공개창 명령어
 
 ━━━━━━━━━━
-📖 정보
-━━━━━━━━━━
-/명령어
-/가이드
-/내정보
-
-━━━━━━━━━━
-🎯 활동
+✅ 일반 유저 명령어
 ━━━━━━━━━━
 /출석
-/미션
-/수령
-/회생
-/단벙
-/단벙참여 단벙제목
-/랭킹
-/랭킹 주간
-/랭킹 전체
-/주사위
 
-━━━━━━━━━━
-💰 재화
-━━━━━━━━━━
-/내정보
-/내정보 보유
-/내정보 업적
-/내정보 코인
-/랭킹 코인
-/코인내역
-
-━━━━━━━━━━
-🎭 마니또
-━━━━━━━━━━
-/마니또
-/마니또확인
-/마니또변경
-/마니또보상
-
-━━━━━━━━━━
-❤️ 친밀도
-━━━━━━━━━━
-/친밀도랭킹
-
-━━━━━━━━━━
-👑 인기인
-━━━━━━━━━━
-/인기인
-/오늘인기인
-/주간인기인
-/언급랭킹 닉네임
-
-━━━━━━━━━━
-💘 설렘픽
-━━━━━━━━━━
-/설렘 닉네임 (1:1)
-/설렘 현황
-/설렘 랭킹
-
-━━━━━━━━━━
-💞 케미
-━━━━━━━━━━
-/케미 닉네임 (1:1)
-/케미 확인 (1:1)
-
-━━━━━━━━━━
-🎭 진실게임
-━━━━━━━━━━
-/진실
-/진실 순한맛 닉네임
-/답변 내용
-/패스
-/진실 취소
-/진실 초기화
-
-━━━━━━━━━━
-🏆 업적
-━━━━━━━━━━
-/업적
-
-※ 기존 긴 명령어도 그대로 사용할 수 있습니다."""
+※ 출석은 기록만 남으며 별도 보상은 없습니다."""
 
 def beginner_guide_text():
     return """📖 S.N.S 가이드
 
-환영합니다 😀
+현재 일반 유저 명령어는 /출석 만 사용합니다.
 
-1️⃣ 공지사항을 먼저 읽어주세요.
-
-2️⃣ 입장 인사를 작성해주세요.
-
-3️⃣ 초대 게시판(족보)에 댓글을 작성해주세요.
-
-4️⃣ 꽃봇을 친구추가 해주세요.
-(미추가 시 일부 기능 사용 불가)
-
-5️⃣ /명령어 를 입력하여 기능을 확인해주세요.
-
-6️⃣ /미션 을 확인하고 /수령 으로 코인을 획득할 수 있습니다.
-
-7️⃣ /내정보 로 보유 코인과 아이템을 확인할 수 있습니다.
-
-8️⃣ 보유 코인이 10코인 미만일 때는 /회생 으로 하루 5회까지 10코인씩 복구할 수 있습니다.
-
-9️⃣ /내정보 보유 로 보유 아이템을 확인할 수 있습니다.
-
-🔟 /마니또 와 친밀도 시스템을 통해 추가 보상을 획득할 수 있습니다.
-
-━━━━━━━━━━
-
-📖 S.N.S 이모티콘 안내
-
-🪩 방장
-🔗 부방장
-⚖️ 관리자
-
-━━━━━━━━━━
-
-🏁 인증자
-
-🔹 남미클자
-🔸 여미클자
-🔰 노미클자
-
-💊 STD 검사 완료
-💉 피검사
-
-👾 외출
-🛸 바쁨
-
-⚠️ 경고
-🚫 벙금지
-
-━━━━━━━━━━
-
-💰 코인
-
-💠 무제한단벙주최권
-🛟 미션클리어권
-📸 봇등록권
-🔤 칭호권
-🎫 닉변권
-🎟 임티권
-
-━━━━━━━━━━
-
-🎁 추천 명령어
-
-/명령어
-/미션
-/수령
-/회생
-/내정보
-/마니또
-
-━━━━━━━━━━
-
-💘 설렘픽 / 케미
-
-/설렘 닉네임
-- 하루 1회 이성에게 익명 투표할 수 있습니다.
-- 설렘픽 랭킹 1~3등은 주간 정산 보상을 받습니다.
-
-/케미 닉네임
-- 하루 1회 이성에게 케미를 보낼 수 있습니다.
-- 서로 케미를 보낸 경우에만 공창에 익명 알림이 표시됩니다.
-- 매칭에 성공하면 본인 1:1창에만 성공 안내가 표시됩니다.
-- 최초 케미 성공 보상은 1코인, 이후 성공 보상은 0.2코인입니다.
-
-/케미 확인
-- 오늘 내가 보낸 케미의 매칭 성공 여부와 나에게 온 요청 수를 확인할 수 있습니다.
-
-※ 노미클은 남자로 간주합니다.
-※ 성별은 닉네임 인증 이모티콘과 저장된 족보를 기준으로 확인합니다.
-
-좋은 인연과 즐거운 대화를 만들어보세요 😀"""
+출석은 보상 없이 기록용으로만 저장됩니다."""
 
 def operator_commands_text():
-    return """🔒 운영진 전용 명령어
-
-━━━━━━━━━━
-⚡ 간단 명령어
-━━━━━━━━━━
-/운영 지급 닉네임 금액
-/운영 차감 닉네임 금액
-/운영 코인검증 닉네임
-/운영 정산검증
-/운영 오류
-/운영 아이템보유
-
-※ 기존 운영 명령어도 그대로 사용할 수 있습니다.
-
-━━━━━━━━━━
-💰 재화
-━━━━━━━━━━
-/지급 닉네임 금액
-/차감 닉네임 금액
-/코인내역 닉네임
-/코인검증 닉네임
-/경제현황
-/회생초기화
-/회생초기화 YYYY-MM-DD
-/회생초기화 전체
+    return """🔒 운영방 전용 명령어
 
 ━━━━━━━━━━
 👤 유저 관리
@@ -1716,79 +1621,11 @@ def operator_commands_text():
 /족보
 
 ━━━━━━━━━━
-🛒 상점/아이템 관리
+📊 기록 확인
 ━━━━━━━━━━
-/상점
-/구매 상품명
-/상품등록 상품명 가격 설명
-/상품추가 상품명 가격 설명
-/상품삭제 상품명
-/아이템지급 닉네임 상품명
-/유저아이템보유
-/유저아이템삭제 닉네임 아이템명 개수
-/사용 구매번호
-/사용처리 구매번호
-/구매취소 구매번호
-
-━━━━━━━━━━
-🎰 가챠
-━━━━━━━━━━
-/가챠
-/가챠 상
-/가챠 중
-/가챠 하
-/가챠 조각
-/가챠 횟수
-/가챠 대장장이
-
-━━━━━━━━━━
-🎟 럭키드로우
-━━━━━━━━━━
-/럭키드로우
-/럭키드로우구매
-/럭키드로우현황
-/럭키드로우결과
-/럭키정산
-/럭키초기화
-/럭키현황전체
-
-━━━━━━━━━━
-👀 이벤트 관리
-━━━━━━━━━━
-/설렘픽초기화
-/설렘픽정산
-/운영진친밀도
-/운영진친밀도 닉네임
-/운영진친밀도확인
-/운영진친밀도확인 닉네임
-
-━━━━━━━━━━
-🎭 진실게임 관리
-━━━━━━━━━━
-/진실질문 난이도 닉네임
-/진실질문추가 난이도 질문내용
-/진실목록
-/진실기록 닉네임
-
-━━━━━━━━━━
-⚙️ 시스템
-━━━━━━━━━━
-/방정보
-/DB상태
-/수집상태
-/최근로그
-/수집누락
-/정산검증
-/최근오류
-/경고
-/경고누적일
-/경고누적일 최소횟수
 /마디수 YYYY-MM-DD
-/단벙참여확인
-/단벙참여확인 단벙제목
-/단벙참여확인 YYYY-MM-DD
-/조각정리
-/버전"""
+
+※ 운영방에서는 위 명령어만 사용합니다."""
 
 # =========================
 # 유저 / 카운트
@@ -3664,7 +3501,7 @@ def get_user_count(date_str, source_id, user_id):
 
 
 def attendance_check(date_str, user_id, user_name):
-    reward = ATTENDANCE_REWARD
+    reward = 0
 
     conn = db()
     cur = conn.cursor()
@@ -3676,29 +3513,18 @@ def attendance_check(date_str, user_id, user_name):
         """, (date_str, user_id, user_name, reward, now_str()))
 
         if cur.rowcount == 0:
-            cur.execute("SELECT COALESCE(balance, 0) AS balance FROM currency WHERE user_id = ?", (user_id,))
-            row = cur.fetchone()
             conn.close()
-            return False, int(row["balance"] or 0) if row else 0
+            return False, 0
 
-        balance = apply_money_change(
-            cur,
-            user_id,
-            user_name,
-            reward,
-            f"출석체크 {date_str}",
-            None,
-            "출석시스템"
-        )
         conn.commit()
         conn.close()
-        return True, balance
+        return True, 0
     except Exception as e:
         conn.rollback()
         conn.close()
         log_error("ATTENDANCE_CHECK_ERROR", e)
         try:
-            return False, get_balance(user_id)
+            return False, 0
         except Exception:
             return False, 0
 
@@ -9378,7 +9204,11 @@ def handle(event):
         reply(event.reply_token, operator_only_warning())
         return
 
-    if is_operator_command(text) and is_staff(user_id) and text not in ("/방정보", "/버전") and source_id not in ADMIN_SOURCE_IDS:
+    if is_operator_command(text) and is_staff(user_id) and not is_enabled_operator_command(text):
+        reply(event.reply_token, "정리된 운영 명령어입니다.\n\n사용 가능한 명령어는 /운영명령어 에서 확인해주세요.")
+        return
+
+    if is_operator_command(text) and is_staff(user_id) and source_id not in ADMIN_SOURCE_IDS:
         reply(event.reply_token, "⛔ 운영방에서만 사용 가능합니다.")
         return
 
@@ -9409,11 +9239,7 @@ def handle(event):
     except Exception as e:
         log_error("AFFINITY_PROCESS_ERROR", e)
 
-    # 토요일 21시 자동 스케줄러가 기본 처리합니다. 메시지 수신 시에도 보조 확인합니다.
-    try:
-        maybe_auto_lucky_draw()
-    except Exception as e:
-        log_error("SNS_LUCKY_AUTO_ERROR", e)
+    # CODE_666에서는 럭키드로우를 사용하지 않습니다.
 
 
     # =========================
@@ -10026,6 +9852,11 @@ def handle(event):
     # =========================
     # 유저 명령어
     # =========================
+    enabled_user_commands = {"/명령어", "/출석"}
+    if text.startswith("/") and text not in enabled_user_commands:
+        reply(event.reply_token, "현재 일반 유저 명령어는 /출석 만 사용합니다.")
+        return
+
     if text == "/가이드":
         if is_private_chat(event):
             reply_many(event.reply_token, split_text_messages(beginner_guide_text()))
@@ -10034,10 +9865,7 @@ def handle(event):
         return
 
     if text == "/명령어":
-        if is_private_chat(event):
-            reply_many(event.reply_token, split_text_messages(user_commands_text()))
-        else:
-            reply(event.reply_token, one_to_one_command_notice("명령어", "/명령어"))
+        reply_many(event.reply_token, split_text_messages(user_commands_text()))
         return
 
     if text == "/주사위":
@@ -10100,25 +9928,20 @@ def handle(event):
         return
 
     if text == "/출석":
-        ok, balance = attendance_check(date_str, user_id, user_name)
+        ok, _ = attendance_check(date_str, user_id, user_name)
         if ok:
             try:
-                streak, streak_paid = check_attendance_streak_reward(date_str, user_id, user_name)
+                streak = attendance_streak_days(user_id, date_str)
             except Exception:
-                streak, streak_paid = 1, []
-            extra = ""
-            if streak_paid:
-                paid_lines = [f"{days}일차 출석일수 보상 {coin_text(reward)}" for days, reward in streak_paid]
-                extra = "\n\n🎁 출석일수 보상\n" + "\n".join(paid_lines)
-                balance = get_balance(user_id)
-            reply(event.reply_token, f"✅ 출석 완료\n\n{user_name}님\n보상: {coin_text(ATTENDANCE_REWARD)}\n현재 보유: {coin_text(balance)}{extra}\n\n{streak}일차 출석완료")
+                streak = 1
+            reply(event.reply_token, f"✅ 출석 완료\n\n{user_name}님\n\n{streak}일차 출석완료")
         else:
             try:
                 streak = attendance_streak_days(user_id, date_str)
             except Exception:
                 streak = 0
             streak_text = f"\n\n{streak}일차 출석완료" if streak > 0 else ""
-            reply(event.reply_token, f"이미 오늘 출석했습니다.\n\n현재 보유: {coin_text(balance)}{streak_text}")
+            reply(event.reply_token, f"이미 오늘 출석했습니다.{streak_text}")
         return
 
     if text == "/단벙":
