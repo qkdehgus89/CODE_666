@@ -95,11 +95,6 @@ DELETE_PENDING = {}
 # key: 운영진 user_id / value: {mode, candidates|target}
 HARD_DELETE_PENDING = {}
 
-# 족보 입력 대기 저장소
-# /족보입력 만 입력한 뒤 다음 메시지 전체를 족보로 저장
-JOKBO_PENDING = {}
-
-
 # =========================
 # 권한
 # =========================
@@ -125,7 +120,7 @@ def is_operator_command(text):
 
     exact_commands = {
         "/운영명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
-        "/족보입력", "/족보", "/경고", "/완전삭제",
+        "/족보", "/경고", "/완전삭제",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -162,7 +157,6 @@ def is_enabled_operator_command(text):
     exact_commands = {
         "/운영명령어",
         "/전체유저",
-        "/족보입력",
         "/족보",
         "/완전삭제",
         "/삭제유저",
@@ -1623,7 +1617,6 @@ def operator_commands_text():
 ━━━━━━━━━━
 📖 족보
 ━━━━━━━━━━
-/족보입력
 /족보
 
 ━━━━━━━━━━
@@ -8406,13 +8399,13 @@ def normalize_genealogy_content(content):
     text_value = text_value.replace("\\r\\n", "\n").replace("\\n", "\n")
     text_value = text_value.replace("\r\n", "\n").replace("\r", "\n")
 
-    # 실수로 본문 앞에 /족보입력, /족보저장 명령어를 같이 붙여넣은 경우 제거
+    # 예전 저장 데이터에 섞인 저장 명령어 흔적을 제거합니다.
     text_value = text_value.strip()
     while True:
         stripped = text_value.lstrip()
         lowered = stripped.lower()
         removed = False
-        for cmd in ["/족보입력", "/족보저장"]:
+        for cmd in ["/족보저장"]:
             if lowered.startswith(cmd):
                 stripped = stripped[len(cmd):].lstrip()
                 text_value = stripped
@@ -8541,7 +8534,7 @@ def genealogy_text_with_coins():
     content = normalize_genealogy_content(content)
 
     if not content:
-        return "저장된 족보가 없습니다.\n\n운영진이 아래 형식으로 먼저 저장해주세요.\n\n/족보입력\n족보 내용 붙여넣기"
+        return "저장된 예전 족보가 없습니다."
 
     coin_users = genealogy_coin_users()
     lines = []
@@ -8552,6 +8545,149 @@ def genealogy_text_with_coins():
             lines.append(f"{base} 💰{points_to_coin(balance)}")
         else:
             lines.append(base)
+
+    return "\n".join(lines).strip()
+
+
+def code666_member_display_parts(user_name):
+    raw_name = str(user_name or "").strip()
+    birth = "-"
+
+    match = re.search(r"(\d{2})([0-9A-Za-z가-힣]+)", remove_nickname_bracket_text(raw_name))
+    if match:
+        birth = match.group(1)
+        token = re.sub(r"^\d+", "", match.group(2)).strip()
+    else:
+        token = normalize_mention_name(raw_name)
+
+    name = token or display_nickname(raw_name) or raw_name or "-"
+    return name, birth, "-"
+
+
+def code666_member_role(user_name):
+    raw_name = str(user_name or "")
+    if "🪩" in raw_name:
+        return "boss"
+    if "🔗" in raw_name:
+        return "underboss"
+    if "⚖" in raw_name:
+        return "admin"
+    if "🏁" in raw_name:
+        return "viewer"
+    return ""
+
+
+def code666_member_gender_group(row):
+    raw_name = str(row["user_name"] or "")
+
+    if "🆇" in raw_name or "👾" in raw_name:
+        return "out"
+
+    is_nomicl = False
+    try:
+        is_nomicl = int(row["is_nomicl"] or 0) == 1
+    except Exception:
+        is_nomicl = False
+
+    if "🅜" in raw_name or "🅕" in raw_name or "🔰" in raw_name or "노미클" in clean_keyword(raw_name):
+        is_nomicl = True
+
+    if "🅵" in raw_name or "🅕" in raw_name:
+        gender = "female"
+    elif "🅼" in raw_name or "🅜" in raw_name:
+        gender = "male"
+    else:
+        gender = effective_user_gender(row, raw_name)
+
+    if is_nomicl:
+        return "nomicl"
+    if gender == "female":
+        return "female"
+    if gender == "male":
+        return "male"
+    return "unknown"
+
+
+def code666_member_line(row):
+    name, birth, region = code666_member_display_parts(row["user_name"])
+    return f"{name} • {birth} • {region}"
+
+
+def code666_member_list_text():
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT
+        u.user_id,
+        u.user_name,
+        u.gender,
+        u.is_nomicl,
+        COALESCE(u.is_active, 1) AS is_active,
+        u.updated_at
+    FROM users u
+    LEFT JOIN deleted_users d
+      ON d.original_user_id = u.user_id
+    WHERE COALESCE(u.is_active, 1) = 1
+      AND d.original_user_id IS NULL
+    ORDER BY u.user_name ASC
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    rev = datetime.now(KST).strftime("%y.%m.%d")
+    lines = [
+        "⚠️𝐂𝐨𝐝𝐞. 𝟔𝟔𝟔 𝐌𝐞𝐦𝐛𝐞𝐫 𝐥𝐢𝐬𝐭⚠️___________",
+        f"{rev} rev",
+        "",
+        "• 𝐁𝐨𝐬𝐬 ………………. 방장",
+        "• 𝐔𝐧𝐝𝐞𝐫𝐛𝐨𝐬𝐬 ………. 부방장",
+        "• 𝐀𝐝𝐦𝐢𝐧 ……………. 관리자",
+        "• 𝐕𝐢𝐞𝐰𝐞𝐫 ……………. 인증자",
+        "",
+        "• 🅵 ……………………. 여자 미클자",
+        "• 🅕 ……………………. 여자 노미클자",
+        "• 🅼 ……………………. 남자 미클자",
+        "• 🅜 ……………………. 남자 노미클자",
+        "• 🆇 ……………………. 외출자",
+    ]
+
+    groups = {
+        "boss": [],
+        "underboss": [],
+        "admin": [],
+        "viewer": [],
+        "male": [],
+        "female": [],
+        "nomicl": [],
+        "out": [],
+        "unknown": [],
+    }
+
+    for row in rows:
+        role = code666_member_role(row["user_name"])
+        if role:
+            groups[role].append(row)
+        groups[code666_member_gender_group(row)].append(row)
+
+    def add_section(title, section_rows):
+        lines.extend(["", title, ""])
+        if not section_rows:
+            lines.append("-")
+            return
+        for row in section_rows:
+            lines.append(code666_member_line(row))
+
+    add_section("𝐁𝐨𝐬𝐬", groups["boss"])
+    add_section("𝐔𝐧𝐝𝐞𝐫𝐛𝐨𝐬𝐬", groups["underboss"])
+    add_section("𝐀𝐝𝐦𝐢𝐧", groups["admin"])
+    add_section("𝐕𝐢𝐞𝐰𝐞𝐫", groups["viewer"])
+    add_section(f"MALE / 🅼 ( {len(groups['male'])} )", groups["male"])
+    add_section(f"FEMALE / 🅵 ( {len(groups['female'])} )", groups["female"])
+    add_section(f"노미클자 ( {len(groups['nomicl'])} )", groups["nomicl"])
+    if groups["out"]:
+        add_section(f"OUT / 🆇 ( {len(groups['out'])} )", groups["out"])
+    if groups["unknown"]:
+        add_section(f"미분류 ( {len(groups['unknown'])} )", groups["unknown"])
 
     return "\n".join(lines).strip()
 
@@ -9223,24 +9359,6 @@ def handle(event):
             reply(event.reply_token, "정리된 운영 명령어입니다.\n\n사용 가능한 명령어는 /운영명령어 에서 확인해주세요.")
             return
 
-    # /족보입력 이후 다음 메시지를 족보 본문으로 저장
-    if user_id in JOKBO_PENDING:
-        if not is_operator_room(source_id):
-            JOKBO_PENDING.pop(user_id, None)
-            reply(event.reply_token, operator_only_warning())
-            return
-
-        # 명령어를 잘못 입력한 경우 족보로 저장하지 않음
-        if text.startswith("/"):
-            JOKBO_PENDING.pop(user_id, None)
-            reply(event.reply_token, "족보 입력을 취소했습니다. 다시 입력하려면 /족보입력 을 사용해주세요.")
-            return
-
-        ok, msg = save_genealogy_content(text, user_name)
-        JOKBO_PENDING.pop(user_id, None)
-        reply(event.reply_token, msg)
-        return
-
     try:
         affinity_msg = process_affinity_message(source_id, user_id, user_name, text)
         if public_notices or affinity_msg:
@@ -9781,19 +9899,11 @@ def handle(event):
         reply(event.reply_token, f"🎁 아이템 지급 완료\n\n대상: {target['user_name']}\n상품: {parts[2]}\n구매번호: {purchase_id}")
         return
 
-    if text == "/족보입력":
-        if not is_staff(user_id):
-            reply(event.reply_token, operator_only_warning())
-            return
-        JOKBO_PENDING[user_id] = True
-        reply(event.reply_token, "족보 내용을 다음 메시지로 보내주세요.\n기존 코인은 무시하고 족보 내용으로 갱신됩니다.")
-        return
-
     if text == "/족보":
         if not is_staff(user_id):
             reply(event.reply_token, operator_only_warning())
             return
-        reply_many(event.reply_token, split_text_messages(genealogy_text_with_coins()))
+        reply_many(event.reply_token, split_text_messages(code666_member_list_text()))
         return
 
     if text == "/럭키정산":
