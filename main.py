@@ -1641,6 +1641,20 @@ def operator_commands_text():
 
 ※ 운영방에서는 위 명령어만 사용합니다."""
 
+
+def room_info_text(source_id, user_id, user_name):
+    return (
+        "🏠 방 정보\n\n"
+        f"SOURCE_ID: {source_id}\n"
+        f"USER_ID: {user_id or '-'}\n"
+        f"USER_NAME: {user_name}\n\n"
+        f"ADMIN_SOURCE_ID: {ADMIN_SOURCE_ID or '-'}\n"
+        f"COUNT_SOURCE_ID: {COUNT_SOURCE_ID or '-'}\n"
+        f"ADMIN_SOURCE_IDS: {', '.join(sorted(ADMIN_SOURCE_IDS)) if ADMIN_SOURCE_IDS else '-'}\n\n"
+        f"운영방 여부: {'✅ YES' if is_operator_room(source_id) else '❌ NO'}\n"
+        f"BOT_VERSION: {BOT_VERSION}"
+    )
+
 # =========================
 # 유저 / 카운트
 # =========================
@@ -9216,6 +9230,10 @@ def handle(event):
 
     text = simplified_command_text((event.message.text or "").strip())
 
+    if text == "/방정보":
+        reply(event.reply_token, room_info_text(source_id, user_id, user_name))
+        return
+
     if public_notices and text.startswith("/"):
         reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices))))
         return
@@ -9270,18 +9288,7 @@ def handle(event):
         return
 
     if text == "/방정보":
-        reply(
-            event.reply_token,
-            "🏠 방 정보\n\n"
-            f"SOURCE_ID: {source_id}\n"
-            f"USER_ID: {user_id or '-'}\n"
-            f"USER_NAME: {user_name}\n\n"
-            f"ADMIN_SOURCE_ID: {ADMIN_SOURCE_ID or '-'}\n"
-            f"COUNT_SOURCE_ID: {COUNT_SOURCE_ID or '-'}\n"
-            f"ADMIN_SOURCE_IDS: {', '.join(sorted(ADMIN_SOURCE_IDS)) if ADMIN_SOURCE_IDS else '-'}\n\n"
-            f"운영방 여부: {'✅ YES' if is_operator_room(source_id) else '❌ NO'}\n"
-            f"BOT_VERSION: {BOT_VERSION}"
-        )
+        reply(event.reply_token, room_info_text(source_id, user_id, user_name))
         return
 
     if text == "/버전":
