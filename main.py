@@ -9380,7 +9380,7 @@ def handle(event):
 
     text = simplified_command_text((event.message.text or "").strip())
 
-    if public_notices and text.startswith("/"):
+    if public_notices and text.startswith("/") and not is_operator_command(text):
         reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices))))
         return
 
