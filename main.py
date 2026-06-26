@@ -130,6 +130,7 @@ def is_operator_command(text):
     exact_commands = {
         "/운영명령어", "/방정보", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
         "/족보입력", "/족보", "/경고", "/완전삭제",
+        "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
         "/가챠", "/가챠시스템", "/가챠횟수", "/상가챠", "/중가챠", "/하가챠",
@@ -149,7 +150,7 @@ def is_operator_command(text):
         "/상품추가 ", "/상품등록 ", "/상품삭제 ",
         "/사용처리 ", "/구매취소 ", "/아이템지급 ",
         "/유저아이템삭제 ",
-        "/마디수 ", "/경고누적일 ", "/단벙참여확인 ", "/단벙참석확인 ",
+        "/마디수 ", "/전체마디수 ", "/경고누적일 ", "/단벙참여확인 ", "/단벙참석확인 ",
         "/운영진친밀도 ", "/운영진친밀도확인 ",
         "/진실질문 ", "/진실기록 ", "/진실질문추가 ",
         "/코인검증 ", "/최근오류 ",
@@ -169,6 +170,8 @@ def is_enabled_operator_command(text):
         "/족보",
         "/완전삭제",
         "/삭제유저",
+        "/마디수",
+        "/전체마디수",
     }
     prefix_commands = [
         "/유저검색 ",
@@ -177,6 +180,7 @@ def is_enabled_operator_command(text):
         "/닉삭제번호",
         "/삭제복구",
         "/마디수 ",
+        "/전체마디수 ",
     ]
     return text in exact_commands or any(text.startswith(prefix) for prefix in prefix_commands)
 
@@ -263,6 +267,49 @@ def parse_date_arg(text_value):
         return value, None
     except ValueError:
         return None, "날짜는 YYYY-MM-DD 형식으로 입력해주세요.\n예: /마디수 2026-06-19"
+
+
+def parse_short_date_arg(text_value):
+    value = (text_value or "").strip()
+    current_year = datetime.now(KST).year
+    if not value:
+        return today(), None
+    if value in ("오늘", "today"):
+        return today(), None
+    if value in ("어제", "yesterday"):
+        return (datetime.now(KST).date() - timedelta(days=1)).strftime("%Y-%m-%d"), None
+
+    for fmt in ("%Y-%m-%d", "%m-%d"):
+        try:
+            if fmt == "%m-%d":
+                parsed = datetime.strptime(f"{current_year}-{value}", "%Y-%m-%d")
+            else:
+                parsed = datetime.strptime(value, fmt)
+            return parsed.strftime("%Y-%m-%d"), None
+        except ValueError:
+            pass
+    return None, "날짜는 MM-DD 형식으로 입력해주세요.\n예: /마디수 06-26"
+
+
+def parse_short_date_range_arg(text_value):
+    value = (text_value or "").strip()
+    if not value:
+        date_str = today()
+        return date_str, date_str, None
+
+    separator = "~" if "~" in value else None
+    if separator:
+        start_raw, end_raw = [part.strip() for part in value.split("~", 1)]
+        start_date, start_err = parse_short_date_arg(start_raw)
+        end_date, end_err = parse_short_date_arg(end_raw)
+        if start_err or end_err:
+            return None, None, "기간은 MM-DD~MM-DD 형식으로 입력해주세요.\n예: /전체마디수 06-01~06-26"
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+        return start_date, end_date, None
+
+    date_str, err = parse_short_date_arg(value)
+    return date_str, date_str, err
 
 
 # =========================
@@ -1551,6 +1598,7 @@ def simplified_command_text(text):
             "유저검색": "/유저검색",
             "유저상세": "/유저상세",
             "마디수": "/마디수",
+            "전체마디수": "/전체마디수",
             "전체유저": "/전체유저",
         }
         mapped = operator_aliases.get(sub)
@@ -1623,7 +1671,9 @@ def operator_commands_text():
 ━━━━━━━━━━
 📊 기록 확인
 ━━━━━━━━━━
-/마디수 YYYY-MM-DD
+/마디수
+/마디수 MM-DD
+/전체마디수 MM-DD~MM-DD
 
 ※ 운영방에서는 위 명령어만 사용합니다."""
 
@@ -2402,40 +2452,47 @@ def warning_text_for_staff(date_str, source_id):
 
 
 def madi_history_text(date_str, source_id):
+    return madi_range_history_text(date_str, date_str, source_id)
+
+
+def madi_range_history_text(start_date, end_date, source_id):
     conn = db()
     cur = conn.cursor()
     cur.execute("""
     SELECT
         c.user_id,
-        c.user_name,
-        c.count,
+        COALESCE(u.user_name, c.user_name) AS user_name,
+        SUM(c.count) AS count,
+        COUNT(DISTINCT c.date) AS active_days,
         COALESCE(u.is_active, 1) AS is_active
     FROM counts c
     LEFT JOIN users u
       ON u.user_id = c.user_id
     LEFT JOIN deleted_users d
       ON d.original_user_id = c.user_id
-    WHERE c.date = ?
+    WHERE c.date BETWEEN ? AND ?
       AND c.source_id = ?
       AND d.original_user_id IS NULL
       AND COALESCE(u.is_active, 1) = 1
-    ORDER BY c.count DESC, c.user_name ASC
-    """, (date_str, source_id))
+    GROUP BY c.user_id, COALESCE(u.user_name, c.user_name), COALESCE(u.is_active, 1)
+    ORDER BY count DESC, user_name ASC
+    """, (start_date, end_date, source_id))
     rows = cur.fetchall()
     conn.close()
 
+    period_text = start_date if start_date == end_date else f"{start_date} ~ {end_date}"
     if not rows:
         return (
             "📊 마디수 기록 조회\n\n"
-            f"기준일: {date_str}\n\n"
-            "해당 날짜의 마디수 기록이 없습니다."
+            f"기간: {period_text}\n\n"
+            "해당 기간의 마디수 기록이 없습니다."
         )
 
     total_count = sum(int(row["count"] or 0) for row in rows)
     lines = [
         "📊 마디수 기록 조회",
         "",
-        f"기준일: {date_str}",
+        f"기간: {period_text}",
         f"참여자: {len(rows)}명",
         f"총 마디수: {total_count}마디",
         "",
@@ -2443,7 +2500,8 @@ def madi_history_text(date_str, source_id):
     ]
 
     for i, row in enumerate(rows, 1):
-        lines.append(f"{i}. {row['user_name']} - {int(row['count'] or 0)}마디")
+        day_text = f" / {int(row['active_days'] or 0)}일" if start_date != end_date else ""
+        lines.append(f"{i}. {row['user_name']} - {int(row['count'] or 0)}마디{day_text}")
 
     lines.append("━━━━━━━━━━")
     return "\n".join(lines)
@@ -9392,15 +9450,26 @@ def handle(event):
         reply_many(event.reply_token, split_text_messages(warning_text_for_staff(date_str, COUNT_SOURCE_ID)))
         return
 
-    if text.startswith("/마디수 "):
+    if text == "/마디수" or text.startswith("/마디수 "):
         if not is_staff(user_id):
             reply(event.reply_token, operator_only_warning())
             return
-        target_date, err = parse_date_arg(text.replace("/마디수", "", 1).strip())
+        target_date, err = parse_short_date_arg(text.replace("/마디수", "", 1).strip())
         if err:
             reply(event.reply_token, err)
             return
         reply_many(event.reply_token, split_text_messages(madi_history_text(target_date, COUNT_SOURCE_ID)))
+        return
+
+    if text == "/전체마디수" or text.startswith("/전체마디수 "):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        start_date, end_date, err = parse_short_date_range_arg(text.replace("/전체마디수", "", 1).strip())
+        if err:
+            reply(event.reply_token, err)
+            return
+        reply_many(event.reply_token, split_text_messages(madi_range_history_text(start_date, end_date, COUNT_SOURCE_ID)))
         return
 
     if text == "/경고누적일" or text.startswith("/경고누적일 "):
