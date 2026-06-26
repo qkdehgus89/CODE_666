@@ -1411,10 +1411,6 @@ def simplified_command_text(text):
     rest = " ".join(args).strip()
 
     exact_aliases = {
-        "/도움말": "/명령어",
-        "/메뉴": "/명령어",
-        "/명령": "/명령어",
-        "/명": "/명령어",
         "/ㅁㅅ": "/미션",
         "/받기": "/수령",
         "/보상": "/수령",
@@ -1606,20 +1602,10 @@ def user_summary_text(user_id, user_name):
         return "👤 내정보를 불러오는 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요."
 
 
-def user_commands_text():
-    return """🤖 S.N.S 꽃봇 공개창 명령어
-
-━━━━━━━━━━
-✅ 일반 유저 명령어
-━━━━━━━━━━
-/출석
-
-※ 출석은 기록만 남으며 별도 보상은 없습니다."""
-
 def beginner_guide_text():
     return """📖 S.N.S 가이드
 
-현재 일반 유저 명령어는 /출석 만 사용합니다.
+현재 일반 유저 명령어는 /출석, /주사위 만 사용합니다.
 
 출석은 보상 없이 기록용으로만 저장됩니다."""
 
@@ -9897,9 +9883,9 @@ def handle(event):
     # =========================
     # 유저 명령어
     # =========================
-    enabled_user_commands = {"/명령어", "/출석"}
+    enabled_user_commands = {"/출석", "/주사위"}
     if text.startswith("/") and text not in enabled_user_commands:
-        reply(event.reply_token, "현재 일반 유저 명령어는 /출석 만 사용합니다.")
+        reply(event.reply_token, "현재 일반 유저 명령어는 /출석, /주사위 만 사용합니다.")
         return
 
     if text == "/가이드":
@@ -9907,10 +9893,6 @@ def handle(event):
             reply_many(event.reply_token, split_text_messages(beginner_guide_text()))
         else:
             reply(event.reply_token, one_to_one_command_notice("가이드", "/가이드"))
-        return
-
-    if text == "/명령어":
-        reply_many(event.reply_token, split_text_messages(user_commands_text()))
         return
 
     if text == "/주사위":
