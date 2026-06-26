@@ -1600,9 +1600,9 @@ def user_summary_text(user_id, user_name):
 def beginner_guide_text():
     return """📖 S.N.S 가이드
 
-현재 일반 유저 명령어는 /출석, /주사위 만 사용합니다.
-
-출석은 보상 없이 기록용으로만 저장됩니다."""
+사용 가능한 일반 명령어
+/출석
+/주사위"""
 
 def operator_commands_text():
     return """🔒 운영방 전용 명령어
@@ -10026,7 +10026,6 @@ def handle(event):
     # =========================
     enabled_user_commands = {"/출석", "/주사위"}
     if text.startswith("/") and text not in enabled_user_commands:
-        reply(event.reply_token, "현재 일반 유저 명령어는 /출석, /주사위 만 사용합니다.")
         return
 
     if text == "/가이드":
