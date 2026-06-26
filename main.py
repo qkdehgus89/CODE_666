@@ -95,6 +95,10 @@ DELETE_PENDING = {}
 # key: 운영진 user_id / value: {mode, candidates|target}
 HARD_DELETE_PENDING = {}
 
+# 족보 입력 대기 저장소
+# key: 운영방 user_id / value: True
+JOKBO_PENDING = {}
+
 # =========================
 # 권한
 # =========================
@@ -120,7 +124,7 @@ def is_operator_command(text):
 
     exact_commands = {
         "/운영명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
-        "/족보", "/경고", "/완전삭제",
+        "/족보입력", "/족보", "/경고", "/완전삭제",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -157,6 +161,7 @@ def is_enabled_operator_command(text):
     exact_commands = {
         "/운영명령어",
         "/전체유저",
+        "/족보입력",
         "/족보",
         "/완전삭제",
         "/삭제유저",
@@ -1617,6 +1622,7 @@ def operator_commands_text():
 ━━━━━━━━━━
 📖 족보
 ━━━━━━━━━━
+/족보입력
 /족보
 
 ━━━━━━━━━━
@@ -8438,9 +8444,8 @@ def save_genealogy_content(content, staff_user_name=""):
     conn.close()
     return True, (
         "📖 족보 저장 완료\n\n"
-        "붙여넣은 족보 안의 기존 💰코인 표기는 무시하고 저장했습니다.\n"
-        "이후 /족보 조회 시 현재 DB 잔액 기준으로 코인이 다시 표시됩니다.\n\n"
-        "/족보 또는 /족보보기 로 확인할 수 있습니다."
+        "입력한 족보를 기준 족보로 저장했습니다.\n"
+        "/족보 조회 시 rev 시간이 현재 시간 정각으로 표시됩니다."
     )
 
 
@@ -8549,6 +8554,36 @@ def genealogy_text_with_coins():
     return "\n".join(lines).strip()
 
 
+def code666_rev_text():
+    return datetime.now(KST).strftime("%y.%m.%d %H:00 rev")
+
+
+def update_code666_rev_line(content):
+    content = normalize_genealogy_content(content)
+    if not content:
+        return ""
+
+    rev_line = code666_rev_text()
+    lines = content.split("\n")
+    rev_pattern = re.compile(r"^\s*\d{2}\.\d{2}\.\d{2}(?:\s+\d{1,2}:\d{2})?\s+rev\s*$", re.IGNORECASE)
+
+    for idx, line in enumerate(lines):
+        if rev_pattern.match(line):
+            lines[idx] = rev_line
+            return "\n".join(lines).strip()
+
+    insert_at = 1 if lines else 0
+    lines.insert(insert_at, rev_line)
+    return "\n".join(lines).strip()
+
+
+def code666_genealogy_text():
+    content = get_genealogy_content()
+    if content:
+        return update_code666_rev_line(content)
+    return code666_member_list_text()
+
+
 def code666_member_display_parts(user_name):
     raw_name = str(user_name or "").strip()
     birth = "-"
@@ -8634,10 +8669,9 @@ def code666_member_list_text():
     rows = cur.fetchall()
     conn.close()
 
-    rev = datetime.now(KST).strftime("%y.%m.%d")
     lines = [
         "⚠️𝐂𝐨𝐝𝐞. 𝟔𝟔𝟔 𝐌𝐞𝐦𝐛𝐞𝐫 𝐥𝐢𝐬𝐭⚠️___________",
-        f"{rev} rev",
+        code666_rev_text(),
         "",
         "• 𝐁𝐨𝐬𝐬 ………………. 방장",
         "• 𝐔𝐧𝐝𝐞𝐫𝐛𝐨𝐬𝐬 ………. 부방장",
@@ -9359,6 +9393,23 @@ def handle(event):
             reply(event.reply_token, "정리된 운영 명령어입니다.\n\n사용 가능한 명령어는 /운영명령어 에서 확인해주세요.")
             return
 
+    # /족보입력 이후 다음 메시지를 최초 족보 본문으로 저장합니다.
+    if user_id in JOKBO_PENDING:
+        if not is_operator_room(source_id):
+            JOKBO_PENDING.pop(user_id, None)
+            reply(event.reply_token, operator_only_warning())
+            return
+
+        if text.startswith("/"):
+            JOKBO_PENDING.pop(user_id, None)
+            reply(event.reply_token, "족보 입력을 취소했습니다. 다시 입력하려면 /족보입력 을 사용해주세요.")
+            return
+
+        ok, msg = save_genealogy_content(text, user_name)
+        JOKBO_PENDING.pop(user_id, None)
+        reply(event.reply_token, msg)
+        return
+
     try:
         affinity_msg = process_affinity_message(source_id, user_id, user_name, text)
         if public_notices or affinity_msg:
@@ -9899,11 +9950,19 @@ def handle(event):
         reply(event.reply_token, f"🎁 아이템 지급 완료\n\n대상: {target['user_name']}\n상품: {parts[2]}\n구매번호: {purchase_id}")
         return
 
+    if text == "/족보입력":
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        JOKBO_PENDING[user_id] = True
+        reply(event.reply_token, "족보 내용을 다음 메시지로 보내주세요.\n저장 후 /족보 로 확인할 수 있습니다.")
+        return
+
     if text == "/족보":
         if not is_staff(user_id):
             reply(event.reply_token, operator_only_warning())
             return
-        reply_many(event.reply_token, split_text_messages(code666_member_list_text()))
+        reply_many(event.reply_token, split_text_messages(code666_genealogy_text()))
         return
 
     if text == "/럭키정산":
