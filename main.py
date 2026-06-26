@@ -1415,11 +1415,6 @@ def simplified_command_text(text):
         "/메뉴": "/명령어",
         "/명령": "/명령어",
         "/명": "/명령어",
-        "/운영": "/운영명령어",
-        "/운영도움말": "/운영명령어",
-        "/운영명령": "/운영명령어",
-        "/운영명": "/운영명령어",
-        "/운명": "/운영명령어",
         "/ㅁㅅ": "/미션",
         "/받기": "/수령",
         "/보상": "/수령",
@@ -1586,25 +1581,6 @@ def simplified_command_text(text):
 
     if command == "/패스":
         return "/진실패스"
-
-    if command == "/운영":
-        if not args:
-            return "/운영명령어"
-        sub = args[0]
-        tail = " ".join(args[1:]).strip()
-        operator_aliases = {
-            "명령어": "/운영명령어",
-            "도움말": "/운영명령어",
-            "유저검색": "/유저검색",
-            "유저상세": "/유저상세",
-            "마디수": "/마디수",
-            "전체마디수": "/전체마디수",
-            "전체유저": "/전체유저",
-        }
-        mapped = operator_aliases.get(sub)
-        if not mapped:
-            return text
-        return (mapped + (" " + tail if tail else "")).strip()
 
     return text
 
