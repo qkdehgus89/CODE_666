@@ -124,7 +124,7 @@ def is_operator_command(text):
         return False
 
     exact_commands = {
-        "/운영명령어", "/방정보", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
+        "/운영명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
         "/족보입력", "/족보", "/경고", "/완전삭제",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
@@ -1607,6 +1607,12 @@ def beginner_guide_text():
 
 def operator_commands_text():
     return """🔒 운영방 전용 명령어
+
+━━━━━━━━━━
+🏠 진단
+━━━━━━━━━━
+/방정보
+※ 어디서든 사용 가능합니다.
 
 ━━━━━━━━━━
 👤 유저 관리
@@ -9264,9 +9270,6 @@ def handle(event):
         return
 
     if text == "/방정보":
-        if not is_staff(user_id):
-            reply(event.reply_token, operator_only_warning())
-            return
         reply(
             event.reply_token,
             "🏠 방 정보\n\n"
