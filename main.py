@@ -1609,12 +1609,6 @@ def operator_commands_text():
     return """🔒 운영방 전용 명령어
 
 ━━━━━━━━━━
-🏠 진단
-━━━━━━━━━━
-/방정보
-※ 어디서든 사용 가능합니다.
-
-━━━━━━━━━━
 👤 유저 관리
 ━━━━━━━━━━
 /전체유저
@@ -1640,20 +1634,6 @@ def operator_commands_text():
 /전체마디수 MM-DD~MM-DD
 
 ※ 운영방에서는 위 명령어만 사용합니다."""
-
-
-def room_info_text(source_id, user_id, user_name):
-    return (
-        "🏠 방 정보\n\n"
-        f"SOURCE_ID: {source_id}\n"
-        f"USER_ID: {user_id or '-'}\n"
-        f"USER_NAME: {user_name}\n\n"
-        f"ADMIN_SOURCE_ID: {ADMIN_SOURCE_ID or '-'}\n"
-        f"COUNT_SOURCE_ID: {COUNT_SOURCE_ID or '-'}\n"
-        f"ADMIN_SOURCE_IDS: {', '.join(sorted(ADMIN_SOURCE_IDS)) if ADMIN_SOURCE_IDS else '-'}\n\n"
-        f"운영방 여부: {'✅ YES' if is_operator_room(source_id) else '❌ NO'}\n"
-        f"BOT_VERSION: {BOT_VERSION}"
-    )
 
 # =========================
 # 유저 / 카운트
@@ -2318,7 +2298,7 @@ def ranking(date_str, source_id, limit=None):
 
     # 중요:
     # 기존 코드는 users.last_seen_source_id = source_id 인 사람만 보여줘서
-    # 메인방에서 말한 뒤 운영진방에서 /방정보 등을 치면 last_seen_source_id가 운영진방으로 바뀌어
+    # 메인방에서 말한 뒤 운영진방에서 관리 명령어를 치면 last_seen_source_id가 운영진방으로 바뀌어
     # 메인방 순위에서 사라질 수 있었습니다.
     # 아래 쿼리는 "해당 방에서 카운트가 있거나, 현재 그 방에 마지막으로 보인 사람"을 모두 표시합니다.
     sql = """
@@ -9230,10 +9210,6 @@ def handle(event):
 
     text = simplified_command_text((event.message.text or "").strip())
 
-    if text == "/방정보":
-        reply(event.reply_token, room_info_text(source_id, user_id, user_name))
-        return
-
     if public_notices and text.startswith("/"):
         reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices))))
         return
@@ -9285,10 +9261,6 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
         reply_many(event.reply_token, split_text_messages(operator_commands_text()))
-        return
-
-    if text == "/방정보":
-        reply(event.reply_token, room_info_text(source_id, user_id, user_name))
         return
 
     if text == "/버전":
