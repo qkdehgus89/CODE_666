@@ -1614,6 +1614,7 @@ def operator_commands_text():
 /유저검색 닉네임
 /유저상세 닉네임
 /닉삭제 닉네임
+/닉삭제 닉네임1 닉네임2
 /닉삭제번호 번호
 /완전삭제
 /삭제유저
@@ -7268,6 +7269,60 @@ def delete_user_by_name(keyword):
     return delete_users_by_ids(targets)
 
 
+def split_delete_keywords(raw_text):
+    raw_text = (raw_text or "").strip()
+    return [part.strip() for part in re.split(r"[\s,，]+", raw_text) if part.strip()]
+
+
+def soft_delete_users_by_keywords(raw_text):
+    keywords = split_delete_keywords(raw_text)
+    deleted = []
+    ambiguous = []
+    missing = []
+
+    for keyword in keywords:
+        rows = find_users(keyword, limit=10)
+        if not rows:
+            missing.append(keyword)
+            continue
+        if len(rows) > 1:
+            ambiguous.append((keyword, rows))
+            continue
+        changed, name = set_user_active_by_id_with_name(rows[0]["user_id"], 0)
+        deleted.append({
+            "user_id": rows[0]["user_id"],
+            "user_name": name or rows[0]["user_name"],
+            "changed": changed,
+        })
+
+    return deleted, ambiguous, missing
+
+
+def hard_delete_targets(targets, deleted_by):
+    completed = []
+    failed = []
+    for target in targets:
+        try:
+            move_user_to_deleted(target["user_id"], target["user_name"], deleted_by)
+            completed.append(target["user_name"])
+        except Exception as e:
+            failed.append(target["user_name"])
+            log_error("HARD_DELETE_TARGET_ERROR", e)
+    return completed, failed
+
+
+def hard_delete_confirm_text(targets):
+    lines = ["🗑 완전삭제 확인", ""]
+    for i, target in enumerate(targets, 1):
+        lines.append(f"{i}. {target['user_name']}")
+    lines += [
+        "",
+        "삭제하려면 1",
+        "취소하려면 2",
+    ]
+    return "\n".join(lines)
+
+
 
 def jagiya_achievement_notice(user_name, other_name):
     return (
@@ -9410,6 +9465,31 @@ def handle(event):
         reply(event.reply_token, msg)
         return
 
+    if user_id in HARD_DELETE_PENDING and text in ("1", "2"):
+        if not is_operator_room(source_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        pending = HARD_DELETE_PENDING.pop(user_id, None) or {}
+        targets = pending.get("targets") or []
+        if text == "2":
+            reply(event.reply_token, "완전삭제를 취소했습니다.")
+            return
+        if not targets:
+            reply(event.reply_token, "완전삭제할 대상이 없습니다. 다시 /닉삭제 로 대상을 지정해 주세요.")
+            return
+        completed, failed = hard_delete_targets(targets, user_name)
+        DELETE_PENDING.pop(user_id, None)
+        lines = ["🗑 완전삭제 완료", ""]
+        if completed:
+            lines.append("삭제유저 DB로 이동")
+            lines.extend([f"- {name}" for name in completed])
+        if failed:
+            lines += ["", "처리 실패"]
+            lines.extend([f"- {name}" for name in failed])
+        lines += ["", "조회: /삭제유저", "복구: /삭제복구 번호"]
+        reply_many(event.reply_token, split_text_messages("\n".join(lines)))
+        return
+
     try:
         affinity_msg = process_affinity_message(source_id, user_id, user_name, text)
         if public_notices or affinity_msg:
@@ -9646,23 +9726,53 @@ def handle(event):
             return
         keyword = text.replace("/닉삭제", "", 1).strip()
         if not keyword:
-            reply(event.reply_token, "사용법: /닉삭제 닉네임")
+            reply(event.reply_token, "사용법: /닉삭제 닉네임\n여러 명: /닉삭제 닉네임1 닉네임2")
             return
-        rows = find_users(keyword, limit=10)
-        if not rows:
-            reply(event.reply_token, "대상 유저를 찾지 못했어요. 닉네임을 조금만 더 정확히 입력해 주세요.")
+
+        keywords = split_delete_keywords(keyword)
+        if len(keywords) == 1:
+            rows = find_users(keyword, limit=10)
+            if not rows:
+                reply(event.reply_token, "대상 유저를 찾지 못했어요. 닉네임을 조금만 더 정확히 입력해 주세요.")
+                return
+            DELETE_PENDING[user_id] = {"mode": "soft_delete", "candidates": rows}
+            if len(rows) > 1:
+                lines = ["검색 결과가 여러 명입니다.", ""]
+                for i, row in enumerate(rows, 1):
+                    lines.append(f"{i}. {row['user_name']}")
+                lines += ["", "삭제할 번호를 /닉삭제번호 번호 로 입력해 주세요."]
+                reply(event.reply_token, "\n".join(lines))
+                return
+            changed, name = set_user_active_by_id_with_name(rows[0]["user_id"], 0)
+            target = {"user_id": rows[0]["user_id"], "user_name": name or rows[0]["user_name"]}
+            DELETE_PENDING[user_id] = {"mode": "deleted_selected", "target": target, "targets": [target]}
+            HARD_DELETE_PENDING.pop(user_id, None)
+            reply(event.reply_token, f"✅ 닉삭제 완료\n\n대상: {target['user_name']}\n\n완전삭제가 필요하면 /완전삭제 를 입력해 주세요.")
             return
-        DELETE_PENDING[user_id] = {"mode": "soft_delete", "candidates": rows}
-        if len(rows) > 1:
-            lines = ["검색 결과가 여러 명입니다.", ""]
-            for i, row in enumerate(rows, 1):
-                lines.append(f"{i}. {row['user_name']}")
-            lines += ["", "삭제할 번호를 /닉삭제번호 번호 로 입력해 주세요."]
-            reply(event.reply_token, "\n".join(lines))
-            return
-        changed, name = set_user_active_by_id_with_name(rows[0]["user_id"], 0)
-        DELETE_PENDING[user_id] = {"mode": "deleted_selected", "target": rows[0]}
-        reply(event.reply_token, f"✅ 닉삭제 완료\n\n대상: {name}\n\n완전삭제가 필요하면 /완전삭제 를 입력해 주세요.")
+
+        deleted, ambiguous, missing = soft_delete_users_by_keywords(keyword)
+        if deleted:
+            DELETE_PENDING[user_id] = {"mode": "deleted_selected", "targets": deleted, "target": deleted[-1]}
+            HARD_DELETE_PENDING.pop(user_id, None)
+        else:
+            DELETE_PENDING.pop(user_id, None)
+            HARD_DELETE_PENDING.pop(user_id, None)
+
+        lines = ["✅ 닉삭제 처리 결과", ""]
+        if deleted:
+            lines.append("비활성화 완료")
+            lines.extend([f"- {row['user_name']}" for row in deleted])
+        if ambiguous:
+            lines += ["", "더 정확히 입력 필요"]
+            for item, rows in ambiguous:
+                names = ", ".join(row["user_name"] for row in rows[:5])
+                lines.append(f"- {item}: {names}")
+        if missing:
+            lines += ["", "찾지 못함"]
+            lines.extend([f"- {item}" for item in missing])
+        if deleted:
+            lines += ["", "완전삭제가 필요하면 /완전삭제 를 입력해 주세요."]
+        reply_many(event.reply_token, split_text_messages("\n".join(lines)))
         return
 
     if text.startswith("/닉삭제번호"):
@@ -9680,8 +9790,10 @@ def handle(event):
             reply(event.reply_token, "번호를 한 번 확인해 주세요.")
             return
         changed, name = set_user_active_by_id_with_name(target["user_id"], 0)
-        DELETE_PENDING[user_id] = {"mode": "deleted_selected", "target": target}
-        reply(event.reply_token, f"✅ 닉삭제 완료\n\n대상: {name}\n\n완전삭제가 필요하면 /완전삭제 를 입력해 주세요.")
+        selected = {"user_id": target["user_id"], "user_name": name or target["user_name"]}
+        DELETE_PENDING[user_id] = {"mode": "deleted_selected", "target": selected, "targets": [selected]}
+        HARD_DELETE_PENDING.pop(user_id, None)
+        reply(event.reply_token, f"✅ 닉삭제 완료\n\n대상: {selected['user_name']}\n\n완전삭제가 필요하면 /완전삭제 를 입력해 주세요.")
         return
 
     if text == "/완전삭제":
@@ -9689,13 +9801,15 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
         pending = DELETE_PENDING.get(user_id)
-        if not pending or pending.get("mode") != "deleted_selected" or not pending.get("target"):
+        targets = []
+        if pending:
+            targets = pending.get("targets") or ([pending.get("target")] if pending.get("target") else [])
+        targets = [target for target in targets if target and target.get("user_id")]
+        if not pending or pending.get("mode") != "deleted_selected" or not targets:
             reply(event.reply_token, "⛔ 먼저 /닉삭제 또는 /닉삭제번호 로 대상을 특정해주세요.")
             return
-        target = pending["target"]
-        move_user_to_deleted(target["user_id"], target["user_name"], user_name)
-        DELETE_PENDING.pop(user_id, None)
-        reply(event.reply_token, f"🗑 완전삭제 완료\n\n대상: {target['user_name']}\n\n삭제유저 DB로 이동했습니다.\n조회: /삭제유저\n복구: /삭제복구 번호")
+        HARD_DELETE_PENDING[user_id] = {"mode": "hard_delete_confirm", "targets": targets}
+        reply_many(event.reply_token, split_text_messages(hard_delete_confirm_text(targets)))
         return
 
     if text == "/삭제유저":
