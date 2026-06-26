@@ -45,14 +45,6 @@ ADMIN_SOURCE_IDS = {
     x.strip() for x in ADMIN_SOURCE_ID.split(",") if x.strip()
 }
 
-ADMIN_USER_IDS = {
-    x.strip() for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip()
-}
-
-OPERATOR_USER_IDS = {
-    x.strip() for x in os.getenv("OPERATOR_USER_IDS", "").split(",") if x.strip()
-}
-
 DB_PATH = os.getenv("DB_PATH", "madi_counter.db").strip()
 PORT = int(os.getenv("PORT", "5000"))
 
@@ -111,12 +103,16 @@ JOKBO_PENDING = {}
 # =========================
 # 권한
 # =========================
+def is_operator_room(source_id):
+    return bool(source_id and source_id in ADMIN_SOURCE_IDS)
+
+
 def is_admin(user_id):
-    return user_id in ADMIN_USER_IDS
+    return True
 
 
 def is_staff(user_id):
-    return user_id in ADMIN_USER_IDS or user_id in OPERATOR_USER_IDS
+    return True
 
 
 def is_operator_command(text):
@@ -186,7 +182,7 @@ def is_enabled_operator_command(text):
 
 
 def operator_only_warning():
-    return "이 명령어는 운영진만 사용할 수 있어요."
+    return "이 명령어는 운영방에서만 사용할 수 있어요."
 
 
 def economy_disabled_text():
@@ -9218,23 +9214,18 @@ def handle(event):
         reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices))))
         return
 
-    # 운영진 전용 명령어 통합 차단
-    # 일반 유저가 운영 명령어를 입력하면 모든 기능에서 같은 경고 문구만 출력한다.
-    if is_operator_command(text) and not is_staff(user_id):
-        reply(event.reply_token, operator_only_warning())
-        return
-
-    if is_operator_command(text) and is_staff(user_id) and not is_enabled_operator_command(text):
-        reply(event.reply_token, "정리된 운영 명령어입니다.\n\n사용 가능한 명령어는 /운영명령어 에서 확인해주세요.")
-        return
-
-    if is_operator_command(text) and is_staff(user_id) and source_id not in ADMIN_SOURCE_IDS:
-        reply(event.reply_token, "⛔ 운영방에서만 사용 가능합니다.")
-        return
+    # 운영 명령어는 운영방에 있는 누구나 사용할 수 있습니다.
+    if is_operator_command(text):
+        if not is_operator_room(source_id):
+            reply(event.reply_token, "⛔ 운영방에서만 사용 가능합니다.")
+            return
+        if not is_enabled_operator_command(text):
+            reply(event.reply_token, "정리된 운영 명령어입니다.\n\n사용 가능한 명령어는 /운영명령어 에서 확인해주세요.")
+            return
 
     # /족보입력 이후 다음 메시지를 족보 본문으로 저장
     if user_id in JOKBO_PENDING:
-        if source_id not in ADMIN_SOURCE_IDS or not is_staff(user_id):
+        if not is_operator_room(source_id):
             JOKBO_PENDING.pop(user_id, None)
             reply(event.reply_token, operator_only_warning())
             return
@@ -9285,8 +9276,7 @@ def handle(event):
             f"ADMIN_SOURCE_ID: {ADMIN_SOURCE_ID or '-'}\n"
             f"COUNT_SOURCE_ID: {COUNT_SOURCE_ID or '-'}\n"
             f"ADMIN_SOURCE_IDS: {', '.join(sorted(ADMIN_SOURCE_IDS)) if ADMIN_SOURCE_IDS else '-'}\n\n"
-            f"운영방 여부: {'✅ YES' if source_id in ADMIN_SOURCE_IDS else '❌ NO'}\n"
-            f"운영자 여부: {'✅ YES' if is_staff(user_id) else '❌ NO'}\n"
+            f"운영방 여부: {'✅ YES' if is_operator_room(source_id) else '❌ NO'}\n"
             f"BOT_VERSION: {BOT_VERSION}"
         )
         return
@@ -9297,7 +9287,7 @@ def handle(event):
             "🤖 S.N.S 꽃봇\n\n"
             f"버전: {BOT_VERSION}\n"
             "빌드: v10.5\n"
-            "환경변수: ADMIN_SOURCE_ID / COUNT_SOURCE_ID / ADMIN_USER_IDS / OPERATOR_USER_IDS"
+            "환경변수: ADMIN_SOURCE_ID / COUNT_SOURCE_ID"
         )
         return
 
