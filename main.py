@@ -129,7 +129,7 @@ def is_operator_command(text):
 
     exact_commands = {
         "/운영명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
-        "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/족보동기화", "/족보인원체크", "/경고", "/완전삭제",
+        "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -144,7 +144,7 @@ def is_operator_command(text):
 
     prefix_commands = [
         "/유저검색 ", "/유저상세 ", "/닉삭제", "/닉삭제번호",
-        "/동반 ", "/초대 ",
+        "/동반 ", "/초대 ", "/여초 ",
         "/지급 ", "/차감 ", "/코인내역 ", "/삭제복구",
         "/구매 ", "/가챠 ",
         "/회생초기화 ",
@@ -174,6 +174,7 @@ def is_enabled_operator_command(text):
         "/족보업데이트방",
         "/족보동기화",
         "/족보인원체크",
+        "/미클",
         "/완전삭제",
         "/삭제유저",
         "/마디수",
@@ -186,6 +187,7 @@ def is_enabled_operator_command(text):
         "/닉삭제번호",
         "/동반 ",
         "/초대 ",
+        "/여초 ",
         "/삭제복구",
         "/마디수 ",
         "/전체마디수 ",
@@ -387,6 +389,22 @@ def init_db():
         user_name TEXT NOT NULL,
         count INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (date, source_id, user_id)
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS micl_referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        relation_type TEXT NOT NULL,
+        inviter_name TEXT NOT NULL,
+        target_user_id TEXT NOT NULL,
+        target_user_name TEXT NOT NULL,
+        source_id TEXT,
+        created_by_user_id TEXT,
+        created_by_user_name TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(relation_type, inviter_name, target_user_id)
     )
     """)
 
@@ -1683,7 +1701,10 @@ def operator_commands_text():
 /족보동기화
 /족보인원체크
 /동반 닉네임
+/동반 초대한사람 대상자
+/여초 초대한사람 대상자
 /초대 닉네임
+/미클
 
 ━━━━━━━━━━
 📊 기록 확인
@@ -8776,6 +8797,159 @@ def set_genealogy_update_room(source_id, user_name=""):
     )
 
 
+MICL_REQUIRED_DAYS = 3
+MICL_REQUIRED_COUNT = 30
+
+
+def register_micl_referral(relation_type, inviter_name, target_keyword, source_id, created_by_user_id, created_by_user_name):
+    relation_type = "동반" if relation_type == "동반" else "초대"
+    inviter_name = str(inviter_name or "").strip()
+    target_keyword = str(target_keyword or "").strip()
+    if not inviter_name or not target_keyword:
+        return f"사용법: /{'동반' if relation_type == '동반' else '여초'} 초대한사람 대상자"
+
+    target, err = resolve_active_user_by_nickname(target_keyword, purpose="대상자")
+    if err:
+        return err
+
+    join_note = f"{inviter_name}{relation_type}"
+    now_value = now_str()
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT INTO micl_referrals (
+        relation_type, inviter_name, target_user_id, target_user_name,
+        source_id, created_by_user_id, created_by_user_name, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(relation_type, inviter_name, target_user_id)
+    DO UPDATE SET
+        target_user_name = excluded.target_user_name,
+        source_id = excluded.source_id,
+        created_by_user_id = excluded.created_by_user_id,
+        created_by_user_name = excluded.created_by_user_name,
+        updated_at = excluded.updated_at
+    """, (
+        relation_type,
+        inviter_name,
+        target["user_id"],
+        target["user_name"],
+        source_id,
+        created_by_user_id,
+        created_by_user_name,
+        now_value,
+        now_value,
+    ))
+
+    cur.execute("""
+    UPDATE genealogy_profiles
+    SET profile_join_note = ?,
+        updated_at = ?
+    WHERE user_id = ?
+    """, (join_note, now_value, target["user_id"]))
+
+    cur.execute("""
+    UPDATE users
+    SET profile_join_note = ?,
+        profile_updated_at = ?,
+        updated_at = ?
+    WHERE user_id = ?
+    """, (join_note, now_value, now_value, target["user_id"]))
+
+    conn.commit()
+    conn.close()
+
+    return (
+        "📌 미클 심사 대상 등록 완료\n\n"
+        f"구분: {relation_type}\n"
+        f"기록: {join_note}\n"
+        f"대상자: {target['user_name']}\n\n"
+        f"조건: 3일 동안 매일 {MICL_REQUIRED_COUNT}마디 이상\n"
+        "확인: /미클"
+    )
+
+
+def micl_qualified_days(cur, user_id, since_date):
+    cur.execute("""
+    SELECT date, count
+    FROM counts
+    WHERE source_id = ?
+      AND user_id = ?
+      AND date >= ?
+      AND count >= ?
+    ORDER BY date ASC
+    """, (COUNT_SOURCE_ID, user_id, since_date, MICL_REQUIRED_COUNT))
+    return [dict(row) for row in cur.fetchall()]
+
+
+def micl_candidates_text():
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT
+        r.relation_type,
+        r.inviter_name,
+        r.target_user_id,
+        r.target_user_name,
+        date(r.created_at) AS start_date,
+        r.created_at
+    FROM micl_referrals r
+    JOIN users u
+      ON u.user_id = r.target_user_id
+    LEFT JOIN deleted_users d
+      ON d.original_user_id = r.target_user_id
+    WHERE COALESCE(u.is_active, 1) = 1
+      AND d.original_user_id IS NULL
+    ORDER BY r.created_at ASC, r.target_user_name ASC
+    """)
+    rows = [dict(row) for row in cur.fetchall()]
+
+    ready = []
+    waiting = []
+    for row in rows:
+        days = micl_qualified_days(cur, row["target_user_id"], row["start_date"])
+        item = {
+            **row,
+            "qualified_days": days,
+            "qualified_count": len(days),
+        }
+        if len(days) >= MICL_REQUIRED_DAYS:
+            ready.append(item)
+        else:
+            waiting.append(item)
+    conn.close()
+
+    lines = [
+        "🅼 미클 대상자 확인",
+        "",
+        f"조건: 등록일 이후 {MICL_REQUIRED_DAYS}일 / 매일 {MICL_REQUIRED_COUNT}마디 이상",
+        "",
+        "✅ 미클 가능",
+    ]
+    if not ready:
+        lines.append("-")
+    else:
+        for item in ready:
+            dates = ", ".join(f"{day['date']}({day['count']})" for day in item["qualified_days"][:MICL_REQUIRED_DAYS])
+            lines.append(
+                f"- {item['target_user_name']} / {item['inviter_name']}{item['relation_type']} / {dates}"
+            )
+
+    lines += ["", "⏳ 진행 중"]
+    if not waiting:
+        lines.append("-")
+    else:
+        for item in waiting[:30]:
+            lines.append(
+                f"- {item['target_user_name']} / {item['inviter_name']}{item['relation_type']} / "
+                f"{item['qualified_count']}/{MICL_REQUIRED_DAYS}일"
+            )
+        if len(waiting) > 30:
+            lines.append(f"...외 {len(waiting) - 30}명")
+
+    return "\n".join(lines)
+
+
 def code666_genealogy_text():
     return (
         "📖 자동족보\n"
@@ -10205,12 +10379,25 @@ def handle(event):
         reply(event.reply_token, economy_disabled_text())
         return
 
-    if (text.startswith("/동반 ") or text.startswith("/초대 ")) and (is_operator_room(source_id) or is_genealogy_update_room(source_id)):
+    if (text.startswith("/여초 ") or text.startswith("/동반 ") or text.startswith("/초대 ")) and (is_operator_room(source_id) or is_genealogy_update_room(source_id)):
+        if text.startswith("/여초 "):
+            parts = text.split(maxsplit=2)
+            if len(parts) < 3:
+                reply(event.reply_token, "사용법: /여초 초대한사람 대상자")
+                return
+            reply_many(event.reply_token, split_text_messages(register_micl_referral("초대", parts[1], parts[2], source_id, user_id, user_name)))
+            return
+
         relation_type = "동반" if text.startswith("/동반 ") else "초대"
         name = text.replace(f"/{relation_type}", "", 1).strip()
         if not name:
             reply(event.reply_token, f"사용법: /{relation_type} 닉네임")
             return
+        if relation_type == "동반":
+            parts = text.split(maxsplit=2)
+            if len(parts) >= 3:
+                reply_many(event.reply_token, split_text_messages(register_micl_referral("동반", parts[1], parts[2], source_id, user_id, user_name)))
+                return
         JOKBO_RELATION_PENDING[source_id] = {"type": relation_type, "name": name}
         reply(
             event.reply_token,
@@ -10332,7 +10519,7 @@ def handle(event):
         conn = db()
         cur = conn.cursor()
         counts = []
-        for table in ["users", "counts", "currency", "currency_logs", "revival_claims", "purchases", "attendance", "danbung_attendance", "mission_claims", "weekly_rewards", "settlement_runs", "bot_errors", "manitto_assignments", "affinity_scores", "mention_logs", "heart_picks", "heart_pick_rewards", "sns_lucky_draw_entries", "sns_lucky_draw_results", "sns_lucky_draw_prizes", "chemistry_signals", "chemistry_rewards", "public_announcements", "truth_game_sessions", "truth_game_questions", "truth_game_resets"]:
+        for table in ["users", "counts", "genealogy_profiles", "micl_referrals", "currency", "currency_logs", "revival_claims", "purchases", "attendance", "danbung_attendance", "mission_claims", "weekly_rewards", "settlement_runs", "bot_errors", "manitto_assignments", "affinity_scores", "mention_logs", "heart_picks", "heart_pick_rewards", "sns_lucky_draw_entries", "sns_lucky_draw_results", "sns_lucky_draw_prizes", "chemistry_signals", "chemistry_rewards", "public_announcements", "truth_game_sessions", "truth_game_questions", "truth_game_resets"]:
             try:
                 cur.execute(f"SELECT COUNT(*) AS cnt FROM {table}")
                 counts.append(f"{table}: {cur.fetchone()['cnt']}")
@@ -10889,20 +11076,39 @@ def handle(event):
         reply(event.reply_token, f"🎁 아이템 지급 완료\n\n대상: {target['user_name']}\n상품: {parts[2]}\n구매번호: {purchase_id}")
         return
 
-    if text.startswith("/동반 ") or text.startswith("/초대 "):
+    if text.startswith("/여초 ") or text.startswith("/동반 ") or text.startswith("/초대 "):
         if not is_staff(user_id):
             reply(event.reply_token, operator_only_warning())
+            return
+        if text.startswith("/여초 "):
+            parts = text.split(maxsplit=2)
+            if len(parts) < 3:
+                reply(event.reply_token, "사용법: /여초 초대한사람 대상자")
+                return
+            reply_many(event.reply_token, split_text_messages(register_micl_referral("초대", parts[1], parts[2], source_id, user_id, user_name)))
             return
         relation_type = "동반" if text.startswith("/동반 ") else "초대"
         name = text.replace(f"/{relation_type}", "", 1).strip()
         if not name:
             reply(event.reply_token, f"사용법: /{relation_type} 닉네임")
             return
+        if relation_type == "동반":
+            parts = text.split(maxsplit=2)
+            if len(parts) >= 3:
+                reply_many(event.reply_token, split_text_messages(register_micl_referral("동반", parts[1], parts[2], source_id, user_id, user_name)))
+                return
         JOKBO_RELATION_PENDING[source_id] = {"type": relation_type, "name": name}
         reply(
             event.reply_token,
             f"📌 족보 메모 대기\n\n다음 문답 등록 대상에게 '{name}{relation_type}'으로 표시할게요."
         )
+        return
+
+    if text == "/미클":
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        reply_many(event.reply_token, split_text_messages(micl_candidates_text()))
         return
 
     if text == "/족보입력":
