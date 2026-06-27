@@ -2352,6 +2352,18 @@ def set_user_active_by_id(user_id, value):
     return changed
 
 
+def deactivate_genealogy_profile(user_id):
+    conn = db()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM genealogy_profiles WHERE user_id = ?", (user_id,))
+        changed = cur.rowcount
+        conn.commit()
+        return changed
+    finally:
+        conn.close()
+
+
 def set_user_active_by_id_with_name(user_id, value):
     user = get_user_by_id(user_id)
 
@@ -2359,6 +2371,8 @@ def set_user_active_by_id_with_name(user_id, value):
         return 0, None
 
     changed = set_user_active_by_id(user_id, value)
+    if int(value or 0) == 0:
+        deactivate_genealogy_profile(user_id)
     return changed, user["user_name"]
 
 
@@ -8976,6 +8990,122 @@ def is_manual_genealogy_member(row, manual_keys):
     return False
 
 
+def parse_manual_genealogy_line(line, section):
+    raw = strip_coin_suffix(line).strip()
+    if not raw or "•" not in raw:
+        return None
+    if section not in {"male", "female", "nomicl"}:
+        return None
+
+    before_comment, _, comment = raw.partition("//")
+    parts = [part.strip() for part in before_comment.split("•")]
+    if len(parts) < 3:
+        return None
+
+    name = parts[0].strip()
+    age = parts[1].strip()
+    region = parts[2].strip()
+    join_note = parts[3].strip() if len(parts) >= 4 else ""
+    join_date = comment.strip() if comment else ""
+
+    if not name or not age or not region:
+        return None
+
+    if section == "female":
+        gender = "female"
+        is_nomicl = 0
+    else:
+        gender = "male"
+        is_nomicl = 1 if section == "nomicl" else 0
+
+    return {
+        "name": name,
+        "age": age,
+        "region": region,
+        "join_note": join_note,
+        "join_date": join_date,
+        "gender": gender,
+        "is_nomicl": is_nomicl,
+        "raw": raw,
+    }
+
+
+def parse_manual_genealogy_profiles(content):
+    rows = []
+    section = None
+    for line in normalize_genealogy_content(content).split("\n"):
+        raw = line.strip()
+        if not raw:
+            continue
+        upper = raw.upper()
+        if "FEMALE" in upper or "🅵" in raw or "🅕" in raw:
+            section = "female"
+            continue
+        if "노미클" in raw or "🅜" in raw:
+            section = "nomicl"
+            continue
+        if "MALE" in upper or "🅼" in raw:
+            section = "male"
+            continue
+        if raw.startswith(("𝐁𝐨𝐬𝐬", "𝐔𝐧𝐝𝐞𝐫𝐛𝐨𝐬𝐬", "𝐀𝐝𝐦𝐢𝐧", "𝐕𝐢𝐞𝐰𝐞𝐫", "OUT", "미분류", "정령")):
+            section = None
+            continue
+
+        parsed = parse_manual_genealogy_line(raw, section)
+        if parsed:
+            rows.append(parsed)
+    return rows
+
+
+def find_active_user_for_manual_genealogy(name):
+    candidates = find_active_user_candidates(name, limit=10)
+    if not candidates:
+        return None, "missing"
+    best_score = candidates[0]["_match_score"]
+    best = [row for row in candidates if row["_match_score"] == best_score]
+    if len(best) != 1:
+        return None, "ambiguous"
+    return best[0], None
+
+
+def upsert_genealogy_profile_from_manual(cur, user, parsed):
+    now_value = now_str()
+    cur.execute("""
+    INSERT INTO genealogy_profiles (
+        user_id, user_name, gender, is_nomicl,
+        profile_age, profile_region, profile_join_note, profile_join_date,
+        profile_nickname, source_id, form_text, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id)
+    DO UPDATE SET
+        user_name = excluded.user_name,
+        gender = excluded.gender,
+        is_nomicl = excluded.is_nomicl,
+        profile_age = excluded.profile_age,
+        profile_region = excluded.profile_region,
+        profile_join_note = excluded.profile_join_note,
+        profile_join_date = excluded.profile_join_date,
+        profile_nickname = excluded.profile_nickname,
+        form_text = excluded.form_text,
+        updated_at = excluded.updated_at
+    """, (
+        user["user_id"],
+        user["user_name"],
+        parsed["gender"],
+        parsed["is_nomicl"],
+        parsed["age"],
+        parsed["region"],
+        parsed["join_note"],
+        parsed["join_date"],
+        parsed["name"],
+        "manual_genealogy",
+        parsed["raw"],
+        now_value,
+        now_value,
+    ))
+
+
 def sync_genealogy_profiles_from_users():
     conn = db()
     cur = conn.cursor()
@@ -9006,7 +9136,13 @@ def sync_genealogy_profiles_from_users():
     """)
     rows = cur.fetchall()
     changed = 0
+    skipped_manual = 0
     for row in rows:
+        cur.execute("SELECT source_id FROM genealogy_profiles WHERE user_id = ?", (row["user_id"],))
+        existing = cur.fetchone()
+        if existing and existing["source_id"] == "manual_genealogy":
+            skipped_manual += 1
+            continue
         cur.execute("""
         INSERT INTO genealogy_profiles (
             user_id, user_name, gender, is_nomicl,
@@ -9042,9 +9178,33 @@ def sync_genealogy_profiles_from_users():
             row["profile_updated_at"] or row["updated_at"] or now_str(),
         ))
         changed += 1
+
+    manual_content = get_genealogy_content()
+    manual_profiles = parse_manual_genealogy_profiles(manual_content)
+    manual_synced = 0
+    manual_missing = []
+    manual_ambiguous = []
+    for parsed in manual_profiles:
+        user, err = find_active_user_for_manual_genealogy(parsed["name"])
+        if err == "missing":
+            manual_missing.append(parsed["name"])
+            continue
+        if err == "ambiguous":
+            manual_ambiguous.append(parsed["name"])
+            continue
+        upsert_genealogy_profile_from_manual(cur, user, parsed)
+        manual_synced += 1
+
     conn.commit()
     conn.close()
-    return changed
+    return {
+        "profile_synced": changed,
+        "manual_synced": manual_synced,
+        "manual_total": len(manual_profiles),
+        "manual_missing": manual_missing,
+        "manual_ambiguous": manual_ambiguous,
+        "skipped_manual": skipped_manual,
+    }
 
 
 def genealogy_count_check_text():
@@ -10221,13 +10381,26 @@ def handle(event):
         if not is_staff(user_id):
             reply(event.reply_token, operator_only_warning())
             return
-        synced = sync_genealogy_profiles_from_users()
+        result = sync_genealogy_profiles_from_users()
         msg = (
             "🔄 족보 동기화 완료\n\n"
-            f"동기화된 자동족보 프로필: {synced}명\n\n"
+            f"문답 프로필 동기화: {result['profile_synced']}명\n"
+            f"수동족보 동기화: {result['manual_synced']}명 / {result['manual_total']}명\n"
+            f"수동 우선 유지: {result['skipped_manual']}명\n"
+            f"전체유저 미매칭: {len(result['manual_missing'])}명\n"
+            f"중복 후보: {len(result['manual_ambiguous'])}명\n\n"
             "확인: /족보인원체크\n"
             "조회: /자동족보"
         )
+        details = []
+        if result["manual_missing"]:
+            details += ["", "전체유저에서 못 찾은 수동족보"]
+            details.extend([f"- {name}" for name in result["manual_missing"][:30]])
+        if result["manual_ambiguous"]:
+            details += ["", "더 정확한 확인이 필요한 수동족보"]
+            details.extend([f"- {name}" for name in result["manual_ambiguous"][:30]])
+        if details:
+            msg += "\n" + "\n".join(details)
         reply_many(event.reply_token, split_text_messages(msg))
         return
 
