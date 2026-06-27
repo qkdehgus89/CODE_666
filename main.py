@@ -9622,6 +9622,18 @@ def code666_member_line(row):
     return line
 
 
+def code666_birth_sort_key(row):
+    name, birth, _ = code666_member_display_parts(row)
+    birth_text = str(birth or "").strip()
+    match = re.search(r"\d{2}", birth_text)
+    if not match:
+        return (999, name)
+    birth_num = int(match.group(0))
+    # 00~30년생은 99년생 뒤로 보내서 88, 89 ... 99, 00, 01 순서로 정렬합니다.
+    sort_year = birth_num + 100 if birth_num <= 30 else birth_num
+    return (sort_year, name)
+
+
 def code666_member_list_text():
     manual_role_map = manual_genealogy_role_map(get_genealogy_content())
     conn = db()
@@ -9693,7 +9705,7 @@ def code666_member_list_text():
         if not section_rows:
             lines.append("-")
             return
-        for row in section_rows:
+        for row in sorted(section_rows, key=code666_birth_sort_key):
             lines.append(code666_member_line(row))
 
     add_section("𝐁𝐨𝐬𝐬", groups["boss"])
