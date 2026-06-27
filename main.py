@@ -128,7 +128,7 @@ def is_operator_command(text):
 
     exact_commands = {
         "/운영명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
-        "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/경고", "/완전삭제",
+        "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/족보동기화", "/족보인원체크", "/경고", "/완전삭제",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -171,6 +171,8 @@ def is_enabled_operator_command(text):
         "/수동족보",
         "/자동족보",
         "/족보업데이트방",
+        "/족보동기화",
+        "/족보인원체크",
         "/완전삭제",
         "/삭제유저",
         "/마디수",
@@ -864,6 +866,24 @@ def init_db():
         key TEXT PRIMARY KEY,
         value TEXT,
         updated_by TEXT,
+        updated_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS genealogy_profiles (
+        user_id TEXT PRIMARY KEY,
+        user_name TEXT NOT NULL,
+        gender TEXT DEFAULT 'unknown',
+        is_nomicl INTEGER DEFAULT 0,
+        profile_age TEXT,
+        profile_region TEXT,
+        profile_join_note TEXT,
+        profile_join_date TEXT,
+        profile_nickname TEXT,
+        source_id TEXT,
+        form_text TEXT,
+        created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
     """)
@@ -1653,6 +1673,8 @@ def operator_commands_text():
 /수동족보
 /자동족보
 /족보업데이트방
+/족보동기화
+/족보인원체크
 /동반 닉네임
 /초대 닉네임
 
@@ -2251,6 +2273,18 @@ def all_registered_users_text():
         return "📋 현재 DB에 등록된 유저가 없습니다."
 
     cur.execute("""
+    SELECT COUNT(*) AS cnt
+    FROM genealogy_profiles gp
+    LEFT JOIN users u
+      ON u.user_id = gp.user_id
+    LEFT JOIN deleted_users d
+      ON d.original_user_id = gp.user_id
+    WHERE COALESCE(u.is_active, 1) = 1
+      AND d.original_user_id IS NULL
+    """)
+    genealogy_profile_count = int((cur.fetchone() or {"cnt": 0})["cnt"] or 0)
+
+    cur.execute("""
     SELECT
         u.user_id,
         u.user_name,
@@ -2271,6 +2305,8 @@ def all_registered_users_text():
         f"총 인원: {total}명",
         f"활성: {active_count}명",
         f"비활성: {inactive_count}명",
+        f"자동족보 DB: {genealogy_profile_count}명",
+        f"자동족보 누락: {max(active_count - genealogy_profile_count, 0)}명",
         "",
     ]
 
@@ -8840,6 +8876,42 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
         now_str(),
         user_id,
     ))
+
+    cur.execute("""
+    INSERT INTO genealogy_profiles (
+        user_id, user_name, gender, is_nomicl,
+        profile_age, profile_region, profile_join_note, profile_join_date,
+        profile_nickname, source_id, form_text, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id)
+    DO UPDATE SET
+        user_name = excluded.user_name,
+        gender = excluded.gender,
+        is_nomicl = excluded.is_nomicl,
+        profile_age = excluded.profile_age,
+        profile_region = excluded.profile_region,
+        profile_join_note = excluded.profile_join_note,
+        profile_join_date = excluded.profile_join_date,
+        profile_nickname = excluded.profile_nickname,
+        source_id = excluded.source_id,
+        form_text = excluded.form_text,
+        updated_at = excluded.updated_at
+    """, (
+        user_id,
+        user_name,
+        parsed["gender"],
+        parsed["is_nomicl"],
+        parsed["age"],
+        parsed["region"],
+        join_note,
+        join_date,
+        profile_name,
+        source_id,
+        text_value,
+        now_str(),
+        now_str(),
+    ))
     conn.commit()
     conn.close()
 
@@ -8902,6 +8974,142 @@ def is_manual_genealogy_member(row, manual_keys):
             if len(auto_key) >= 2 and len(manual_key) >= 2 and (auto_key.startswith(manual_key) or manual_key.startswith(auto_key)):
                 return True
     return False
+
+
+def sync_genealogy_profiles_from_users():
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT
+        u.user_id,
+        u.user_name,
+        u.gender,
+        u.is_nomicl,
+        u.profile_age,
+        u.profile_region,
+        u.profile_join_note,
+        u.profile_join_date,
+        u.profile_nickname,
+        u.last_seen_source_id,
+        u.profile_updated_at,
+        u.updated_at
+    FROM users u
+    LEFT JOIN deleted_users d
+      ON d.original_user_id = u.user_id
+    WHERE COALESCE(u.is_active, 1) = 1
+      AND d.original_user_id IS NULL
+      AND (
+        COALESCE(u.profile_age, '') != ''
+        OR COALESCE(u.profile_region, '') != ''
+        OR COALESCE(u.profile_nickname, '') != ''
+      )
+    """)
+    rows = cur.fetchall()
+    changed = 0
+    for row in rows:
+        cur.execute("""
+        INSERT INTO genealogy_profiles (
+            user_id, user_name, gender, is_nomicl,
+            profile_age, profile_region, profile_join_note, profile_join_date,
+            profile_nickname, source_id, form_text, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id)
+        DO UPDATE SET
+            user_name = excluded.user_name,
+            gender = excluded.gender,
+            is_nomicl = excluded.is_nomicl,
+            profile_age = excluded.profile_age,
+            profile_region = excluded.profile_region,
+            profile_join_note = excluded.profile_join_note,
+            profile_join_date = excluded.profile_join_date,
+            profile_nickname = excluded.profile_nickname,
+            source_id = excluded.source_id,
+            updated_at = excluded.updated_at
+        """, (
+            row["user_id"],
+            row["user_name"],
+            row["gender"],
+            row["is_nomicl"],
+            row["profile_age"],
+            row["profile_region"],
+            row["profile_join_note"],
+            row["profile_join_date"],
+            row["profile_nickname"],
+            row["last_seen_source_id"],
+            "",
+            row["profile_updated_at"] or row["updated_at"] or now_str(),
+            row["profile_updated_at"] or row["updated_at"] or now_str(),
+        ))
+        changed += 1
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def genealogy_count_check_text():
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT u.user_id, u.user_name
+    FROM users u
+    LEFT JOIN deleted_users d
+      ON d.original_user_id = u.user_id
+    WHERE COALESCE(u.is_active, 1) = 1
+      AND d.original_user_id IS NULL
+    ORDER BY u.user_name ASC
+    """)
+    active_users = [dict(row) for row in cur.fetchall()]
+
+    cur.execute("""
+    SELECT gp.user_id, gp.user_name, gp.profile_nickname
+    FROM genealogy_profiles gp
+    LEFT JOIN users u
+      ON u.user_id = gp.user_id
+    LEFT JOIN deleted_users d
+      ON d.original_user_id = gp.user_id
+    WHERE COALESCE(u.is_active, 1) = 1
+      AND d.original_user_id IS NULL
+    ORDER BY COALESCE(gp.profile_nickname, gp.user_name) ASC
+    """)
+    profiles = [dict(row) for row in cur.fetchall()]
+    conn.close()
+
+    active_ids = {row["user_id"] for row in active_users}
+    profile_ids = {row["user_id"] for row in profiles}
+    missing_profiles = [row for row in active_users if row["user_id"] not in profile_ids]
+    profile_only = [row for row in profiles if row["user_id"] not in active_ids]
+
+    content = normalize_genealogy_content(get_genealogy_content())
+    manual_keys = manual_genealogy_member_keys(content)
+
+    lines = [
+        "📊 족보 인원 체크",
+        "",
+        f"/전체유저 활성 인원: {len(active_users)}명",
+        f"자동족보 DB 인원: {len(profiles)}명",
+        f"수동족보 추정 인원: {len(manual_keys)}명",
+        f"자동족보 누락: {len(missing_profiles)}명",
+        f"비활성/삭제 의심 자동족보: {len(profile_only)}명",
+    ]
+
+    if missing_profiles:
+        lines += ["", "자동족보 DB에 없는 활성 유저"]
+        for row in missing_profiles[:30]:
+            lines.append(f"- {row['user_name']}")
+        if len(missing_profiles) > 30:
+            lines.append(f"...외 {len(missing_profiles) - 30}명")
+
+    if profile_only:
+        lines += ["", "확인 필요한 자동족보 유저"]
+        for row in profile_only[:30]:
+            name = row.get("profile_nickname") or row.get("user_name")
+            lines.append(f"- {name}")
+        if len(profile_only) > 30:
+            lines.append(f"...외 {len(profile_only) - 30}명")
+
+    lines += ["", "동기화: /족보동기화"]
+    return "\n".join(lines)
 
 
 def code666_member_display_parts(row):
@@ -8989,24 +9197,26 @@ def code666_member_list_text(exclude_member_keys=None):
     cur = conn.cursor()
     cur.execute("""
     SELECT
-        u.user_id,
-        u.user_name,
-        u.gender,
-        u.is_nomicl,
-        u.profile_age,
-        u.profile_region,
-        u.profile_join_note,
-        u.profile_join_date,
-        u.profile_nickname,
-        u.profile_updated_at,
+        gp.user_id,
+        gp.user_name,
+        gp.gender,
+        gp.is_nomicl,
+        gp.profile_age,
+        gp.profile_region,
+        gp.profile_join_note,
+        gp.profile_join_date,
+        gp.profile_nickname,
+        gp.updated_at AS profile_updated_at,
         COALESCE(u.is_active, 1) AS is_active,
-        u.updated_at
-    FROM users u
+        gp.updated_at
+    FROM genealogy_profiles gp
+    LEFT JOIN users u
+      ON u.user_id = gp.user_id
     LEFT JOIN deleted_users d
-      ON d.original_user_id = u.user_id
+      ON d.original_user_id = gp.user_id
     WHERE COALESCE(u.is_active, 1) = 1
       AND d.original_user_id IS NULL
-    ORDER BY u.user_name ASC
+    ORDER BY COALESCE(gp.profile_nickname, gp.user_name) ASC
     """)
     rows = [row for row in cur.fetchall() if not is_manual_genealogy_member(row, exclude_member_keys)]
     conn.close()
@@ -10005,6 +10215,27 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
         reply_many(event.reply_token, split_text_messages(all_registered_users_text()))
+        return
+
+    if text == "/족보동기화":
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        synced = sync_genealogy_profiles_from_users()
+        msg = (
+            "🔄 족보 동기화 완료\n\n"
+            f"동기화된 자동족보 프로필: {synced}명\n\n"
+            "확인: /족보인원체크\n"
+            "조회: /자동족보"
+        )
+        reply_many(event.reply_token, split_text_messages(msg))
+        return
+
+    if text == "/족보인원체크":
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        reply_many(event.reply_token, split_text_messages(genealogy_count_check_text()))
         return
 
     if text.startswith("/유저검색 "):
