@@ -8781,7 +8781,7 @@ def parse_code666_join_form(text_value):
     is_nomicl = 1 if (
         gender == "male"
         or "노미클" in clean_keyword(text_value)
-        or (exp_clean and not exp_clean.startswith("유"))
+        or (gender != "female" and exp_clean and not exp_clean.startswith("유"))
     ) else 0
 
     return {
