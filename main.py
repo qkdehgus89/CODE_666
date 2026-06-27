@@ -99,6 +99,10 @@ HARD_DELETE_PENDING = {}
 # key: 운영방 user_id / value: True
 JOKBO_PENDING = {}
 
+# 족보 자동등록 동반/초대 메모 대기 저장소
+# key: source_id / value: {type, name}
+JOKBO_RELATION_PENDING = {}
+
 # =========================
 # 권한
 # =========================
@@ -139,6 +143,7 @@ def is_operator_command(text):
 
     prefix_commands = [
         "/유저검색 ", "/유저상세 ", "/닉삭제", "/닉삭제번호",
+        "/동반 ", "/초대 ",
         "/지급 ", "/차감 ", "/코인내역 ", "/삭제복구",
         "/구매 ", "/가챠 ",
         "/회생초기화 ",
@@ -173,6 +178,8 @@ def is_enabled_operator_command(text):
         "/유저상세 ",
         "/닉삭제",
         "/닉삭제번호",
+        "/동반 ",
+        "/초대 ",
         "/삭제복구",
         "/마디수 ",
         "/전체마디수 ",
@@ -869,6 +876,12 @@ def init_db():
         ("gender", "TEXT", "'unknown'"),
         ("is_nomicl", "INTEGER", "0"),
         ("is_active", "INTEGER", "1"),
+        ("profile_age", "TEXT", "NULL"),
+        ("profile_region", "TEXT", "NULL"),
+        ("profile_join_note", "TEXT", "NULL"),
+        ("profile_join_date", "TEXT", "NULL"),
+        ("profile_nickname", "TEXT", "NULL"),
+        ("profile_updated_at", "TEXT", "NULL"),
     ]:
         if col not in user_cols:
             cur.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type} DEFAULT {default_value}")
@@ -1625,6 +1638,8 @@ def operator_commands_text():
 ━━━━━━━━━━
 /족보입력
 /족보
+/동반 닉네임
+/초대 닉네임
 
 ━━━━━━━━━━
 📊 기록 확인
@@ -1698,6 +1713,13 @@ def normalize_match_text(text_value):
 
 def display_nickname(user_name):
     return normalize_mention_name(user_name) or str(user_name or "").strip()
+
+
+def row_value(row, key, default=None):
+    try:
+        return row[key]
+    except Exception:
+        return default
 
 
 def gender_name_keys(user_name):
@@ -8633,13 +8655,120 @@ def update_code666_rev_line(content):
 
 
 def code666_genealogy_text():
-    content = get_genealogy_content()
-    if content:
-        return update_code666_rev_line(content)
     return code666_member_list_text()
 
 
-def code666_member_display_parts(user_name):
+def parse_code666_join_form(text_value):
+    text_value = str(text_value or "")
+    if not all(key in text_value for key in ["나이", "성별", "지역"]):
+        return None
+
+    fields = {}
+    for line in text_value.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = clean_keyword(key)
+        value = value.strip()
+        if key:
+            fields[key] = value
+
+    age = fields.get("나이", "").strip()
+    gender_text = fields.get("성별", "").strip()
+    region = fields.get("지역", "").strip()
+    nickname = fields.get("전에쓰던닉네임", "").strip()
+    experience = fields.get("야방경험유무", "").strip()
+
+    if not age or not gender_text or not region:
+        return None
+
+    if "남" in gender_text:
+        gender = "male"
+    elif "여" in gender_text:
+        gender = "female"
+    else:
+        gender = "unknown"
+
+    exp_clean = clean_keyword(experience)
+    is_nomicl = 1 if ("노미클" in clean_keyword(text_value) or (exp_clean and not exp_clean.startswith("유"))) else 0
+
+    return {
+        "age": age,
+        "gender": gender,
+        "region": region,
+        "nickname": nickname,
+        "is_nomicl": is_nomicl,
+    }
+
+
+def code666_join_date_text():
+    now_dt = datetime.now(KST)
+    return f"{now_dt.month}.{now_dt.day}"
+
+
+def save_code666_join_profile(user_id, user_name, source_id, text_value):
+    if not user_id:
+        return None
+
+    parsed = parse_code666_join_form(text_value)
+    if not parsed:
+        return None
+
+    relation = JOKBO_RELATION_PENDING.pop(source_id, None) if source_id else None
+    join_note = ""
+    if relation and relation.get("name") and relation.get("type"):
+        join_note = f"{relation['name']}{relation['type']}"
+
+    profile_name = parsed["nickname"] or display_nickname(user_name) or user_name
+    join_date = code666_join_date_text()
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    UPDATE users
+    SET gender = ?,
+        is_nomicl = ?,
+        profile_age = ?,
+        profile_region = ?,
+        profile_join_note = ?,
+        profile_join_date = ?,
+        profile_nickname = ?,
+        profile_updated_at = ?,
+        updated_at = ?
+    WHERE user_id = ?
+    """, (
+        parsed["gender"],
+        parsed["is_nomicl"],
+        parsed["age"],
+        parsed["region"],
+        join_note,
+        join_date,
+        profile_name,
+        now_str(),
+        now_str(),
+        user_id,
+    ))
+    conn.commit()
+    conn.close()
+
+    return (
+        "📖 족보 자동 반영 완료\n\n"
+        f"대상: {profile_name}\n"
+        f"성별: {gender_label(parsed['gender'])}\n"
+        f"나이: {parsed['age']}\n"
+        f"지역: {parsed['region']}"
+        + (f"\n메모: {join_note}" if join_note else "")
+    )
+
+
+def code666_member_display_parts(row):
+    profile_name = str(row_value(row, "profile_nickname") or "").strip()
+    profile_age = str(row_value(row, "profile_age") or "").strip()
+    profile_region = str(row_value(row, "profile_region") or "").strip()
+    if profile_name or profile_age or profile_region:
+        return profile_name or display_nickname(row["user_name"]), profile_age or "-", profile_region or "-"
+
+    user_name = row["user_name"]
     raw_name = str(user_name or "").strip()
     birth = "-"
 
@@ -8699,8 +8828,16 @@ def code666_member_gender_group(row):
 
 
 def code666_member_line(row):
-    name, birth, region = code666_member_display_parts(row["user_name"])
-    return f"{name} • {birth} • {region}"
+    name, birth, region = code666_member_display_parts(row)
+    parts = [name, birth, region]
+    join_note = str(row_value(row, "profile_join_note") or "").strip()
+    join_date = str(row_value(row, "profile_join_date") or "").strip()
+    if join_note:
+        parts.append(join_note)
+    line = " • ".join(parts)
+    if code666_member_gender_group(row) == "nomicl" and row_value(row, "gender") == "male" and join_date:
+        line = f"{line} // {join_date}"
+    return line
 
 
 def code666_member_list_text():
@@ -8712,6 +8849,12 @@ def code666_member_list_text():
         u.user_name,
         u.gender,
         u.is_nomicl,
+        u.profile_age,
+        u.profile_region,
+        u.profile_join_note,
+        u.profile_join_date,
+        u.profile_nickname,
+        u.profile_updated_at,
         COALESCE(u.is_active, 1) AS is_active,
         u.updated_at
     FROM users u
@@ -9404,9 +9547,12 @@ def handle(event):
 
         try:
             if message_type == "text":
+                join_profile_msg = save_code666_join_profile(user_id, user_name, source_id, message_text)
+                if join_profile_msg:
+                    public_notices.append(join_profile_msg)
                 process_mentions(date_str, source_id, user_id, user_name, message_text)
         except Exception as e:
-            log_error("MENTION_PROCESS_ERROR", e)
+            log_error("TEXT_PROCESS_ERROR", e)
 
         try:
             if source_id == COUNT_SOURCE_ID:
@@ -10062,6 +10208,22 @@ def handle(event):
             return
         purchase_id = add_reward_purchase(target["user_id"], target["user_name"], parts[2])
         reply(event.reply_token, f"🎁 아이템 지급 완료\n\n대상: {target['user_name']}\n상품: {parts[2]}\n구매번호: {purchase_id}")
+        return
+
+    if text.startswith("/동반 ") or text.startswith("/초대 "):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        relation_type = "동반" if text.startswith("/동반 ") else "초대"
+        name = text.replace(f"/{relation_type}", "", 1).strip()
+        if not name:
+            reply(event.reply_token, f"사용법: /{relation_type} 닉네임")
+            return
+        JOKBO_RELATION_PENDING[source_id] = {"type": relation_type, "name": name}
+        reply(
+            event.reply_token,
+            f"📌 족보 메모 대기\n\n다음 문답 등록 대상에게 '{name}{relation_type}'으로 표시할게요."
+        )
         return
 
     if text == "/족보입력":
