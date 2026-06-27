@@ -128,7 +128,7 @@ def is_operator_command(text):
 
     exact_commands = {
         "/운영명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
-        "/족보입력", "/족보", "/경고", "/완전삭제",
+        "/족보입력", "/족보", "/수동족보", "/자동족보", "/경고", "/완전삭제",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -168,6 +168,8 @@ def is_enabled_operator_command(text):
         "/전체유저",
         "/족보입력",
         "/족보",
+        "/수동족보",
+        "/자동족보",
         "/완전삭제",
         "/삭제유저",
         "/마디수",
@@ -1638,6 +1640,8 @@ def operator_commands_text():
 ━━━━━━━━━━
 /족보입력
 /족보
+/수동족보
+/자동족보
 /동반 닉네임
 /초대 닉네임
 
@@ -8522,7 +8526,7 @@ def save_genealogy_content(content, staff_user_name=""):
     return True, (
         "📖 족보 저장 완료\n\n"
         "입력한 족보를 기준 족보로 저장했습니다.\n"
-        "/족보 조회 시 rev 시간이 현재 시간 정각으로 표시됩니다."
+        "/수동족보 조회 시 rev 시간이 현재 시간 정각으로 표시됩니다."
     )
 
 
@@ -8656,6 +8660,21 @@ def update_code666_rev_line(content):
 
 def code666_genealogy_text():
     return code666_member_list_text()
+
+
+def code666_manual_genealogy_text():
+    content = get_genealogy_content()
+    if content:
+        return update_code666_rev_line(content)
+    return "저장된 수동족보가 없습니다.\n\n/족보입력 으로 먼저 수동족보를 저장해 주세요."
+
+
+def code666_genealogy_menu_text():
+    return (
+        "📖 족보 조회\n\n"
+        "/수동족보 - /족보입력 으로 저장한 족보\n"
+        "/자동족보 - 문답 양식으로 자동 반영된 족보"
+    )
 
 
 def parse_code666_join_form(text_value):
@@ -10231,10 +10250,24 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
         JOKBO_PENDING[user_id] = True
-        reply(event.reply_token, "족보 내용을 다음 메시지로 보내주세요.\n저장 후 /족보 로 확인할 수 있습니다.")
+        reply(event.reply_token, "수동족보 내용을 다음 메시지로 보내주세요.\n저장 후 /수동족보 로 확인할 수 있습니다.")
         return
 
     if text == "/족보":
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        reply(event.reply_token, code666_genealogy_menu_text())
+        return
+
+    if text == "/수동족보":
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        reply_many(event.reply_token, split_text_messages(code666_manual_genealogy_text()))
+        return
+
+    if text == "/자동족보":
         if not is_staff(user_id):
             reply(event.reply_token, operator_only_warning())
             return
