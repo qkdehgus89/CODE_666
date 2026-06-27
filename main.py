@@ -8717,7 +8717,18 @@ def set_genealogy_update_room(source_id, user_name=""):
 
 
 def code666_genealogy_text():
-    return code666_member_list_text()
+    content = normalize_genealogy_content(get_genealogy_content())
+    manual_keys = manual_genealogy_member_keys(content)
+    if not manual_keys:
+        return code666_member_list_text()
+
+    auto_text = code666_member_list_text(exclude_member_keys=manual_keys)
+    return (
+        "📖 자동족보\n"
+        "수동족보에 이미 있는 유저는 제외하고, 자동 등록된 신규/누락 유저만 보여줍니다.\n"
+        "최종 기준은 /수동족보 입니다.\n\n"
+        + auto_text
+    )
 
 
 def code666_manual_genealogy_text():
@@ -8731,7 +8742,7 @@ def code666_genealogy_menu_text():
     return (
         "📖 족보 조회\n\n"
         "/수동족보 - /족보입력 으로 저장한 족보\n"
-        "/자동족보 - 문답 양식으로 자동 반영된 족보"
+        "/자동족보 - 수동족보와 대조한 자동 보충 족보"
     )
 
 
@@ -8838,6 +8849,57 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
     )
 
 
+def manual_genealogy_member_keys(content):
+    keys = set()
+    for line in normalize_genealogy_content(content).split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if "•" not in line and not re.match(r"^\s*[0-9가-힣A-Za-z🅵🅕🅼🅜🆇🔰🏁⚖🔗🪩]", line):
+            continue
+        key = genealogy_first_member_key(line)
+        if len(key) >= 2:
+            keys.add(key)
+            key_without_age = re.sub(r"^\d+", "", key)
+            if len(key_without_age) >= 2:
+                keys.add(key_without_age)
+    return keys
+
+
+def code666_member_compare_keys(row):
+    values = [
+        row_value(row, "profile_nickname"),
+        row_value(row, "user_name"),
+        code666_member_line(row).split("•", 1)[0],
+    ]
+    keys = set()
+    for value in values:
+        key = clean_keyword(value)
+        mention_key = normalize_mention_name(value)
+        for item in [key, mention_key]:
+            item = str(item or "").strip()
+            if len(item) < 2:
+                continue
+            keys.add(item)
+            item_without_age = re.sub(r"^\d+", "", item)
+            if len(item_without_age) >= 2:
+                keys.add(item_without_age)
+    return keys
+
+
+def is_manual_genealogy_member(row, manual_keys):
+    if not manual_keys:
+        return False
+    auto_keys = code666_member_compare_keys(row)
+    if auto_keys & manual_keys:
+        return True
+    for auto_key in auto_keys:
+        for manual_key in manual_keys:
+            if len(auto_key) >= 2 and len(manual_key) >= 2 and (auto_key.startswith(manual_key) or manual_key.startswith(auto_key)):
+                return True
+    return False
+
+
 def code666_member_display_parts(row):
     profile_name = str(row_value(row, "profile_nickname") or "").strip()
     profile_age = str(row_value(row, "profile_age") or "").strip()
@@ -8917,7 +8979,8 @@ def code666_member_line(row):
     return line
 
 
-def code666_member_list_text():
+def code666_member_list_text(exclude_member_keys=None):
+    exclude_member_keys = exclude_member_keys or set()
     conn = db()
     cur = conn.cursor()
     cur.execute("""
@@ -8941,7 +9004,7 @@ def code666_member_list_text():
       AND d.original_user_id IS NULL
     ORDER BY u.user_name ASC
     """)
-    rows = cur.fetchall()
+    rows = [row for row in cur.fetchall() if not is_manual_genealogy_member(row, exclude_member_keys)]
     conn.close()
 
     lines = [
