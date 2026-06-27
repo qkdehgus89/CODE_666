@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import json
+import unicodedata
 from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
@@ -8991,6 +8992,22 @@ def is_manual_genealogy_member(row, manual_keys):
     return False
 
 
+def manual_genealogy_role_map(content):
+    roles = {}
+    for parsed in parse_manual_genealogy_profiles(content):
+        role = parsed.get("role") or ""
+        if role not in {"boss", "underboss", "admin", "viewer"}:
+            continue
+        for key in [clean_keyword(parsed.get("name")), normalize_mention_name(parsed.get("name"))]:
+            key = str(key or "").strip()
+            if len(key) >= 2:
+                roles[key] = role
+                key_without_age = re.sub(r"^\d+", "", key)
+                if len(key_without_age) >= 2:
+                    roles[key_without_age] = role
+    return roles
+
+
 def parse_manual_genealogy_line(line, section):
     raw = strip_coin_suffix(line).strip()
     if not raw or "•" not in raw:
@@ -9050,17 +9067,18 @@ def parse_manual_genealogy_profiles(content):
         raw = line.strip()
         if not raw:
             continue
-        upper = raw.upper()
-        if raw.startswith("𝐁𝐨𝐬𝐬") or upper == "BOSS":
+        folded = unicodedata.normalize("NFKC", raw)
+        upper = folded.upper()
+        if upper == "BOSS":
             section = "boss"
             continue
-        if raw.startswith("𝐔𝐧𝐝𝐞𝐫𝐛𝐨𝐬𝐬") or upper == "UNDERBOSS":
+        if upper == "UNDERBOSS":
             section = "underboss"
             continue
-        if raw.startswith("𝐀𝐝𝐦𝐢𝐧") or upper == "ADMIN":
+        if upper == "ADMIN":
             section = "admin"
             continue
-        if raw.startswith("𝐕𝐢𝐞𝐰𝐞𝐫") or upper == "VIEWER":
+        if upper == "VIEWER":
             section = "viewer"
             continue
         if "FEMALE" in upper or "🅵" in raw or "🅕" in raw:
@@ -9333,23 +9351,48 @@ def code666_member_display_parts(row):
 
 
 def code666_member_role(user_name):
-    raw_name = str(user_name or "")
-    if "🪩" in raw_name:
+    raw_name = unicodedata.normalize("NFKC", str(user_name or ""))
+    normalized = clean_keyword(raw_name)
+    lowered = str(raw_name or "").lower()
+
+    if "🪩" in raw_name or "방장" in normalized or "보스" in normalized or "boss" in lowered:
         return "boss"
-    if "🔗" in raw_name:
+    if (
+        "🔗" in raw_name
+        or "부방장" in normalized
+        or "언더보스" in normalized
+        or "underboss" in lowered
+        or "under boss" in lowered
+    ):
         return "underboss"
-    if "⚖" in raw_name:
+    if "⚖" in raw_name or "관리자" in normalized or "어드민" in normalized or "admin" in lowered:
         return "admin"
-    if "🏁" in raw_name:
+    if "🏁" in raw_name or "인증자" in normalized or "뷰어" in normalized or "viewer" in lowered:
         return "viewer"
     return ""
 
 
-def code666_member_row_role(row):
+def code666_member_row_role(row, manual_role_map=None):
     role = str(row_value(row, "profile_role") or "").strip()
     if role in {"boss", "underboss", "admin", "viewer"}:
         return role
-    return code666_member_role(row["user_name"])
+
+    manual_role_map = manual_role_map or {}
+    if manual_role_map:
+        for key in code666_member_compare_keys(row):
+            role = manual_role_map.get(key)
+            if role:
+                return role
+
+    for value in [
+        row_value(row, "user_name"),
+        row_value(row, "profile_nickname"),
+        row_value(row, "form_text"),
+    ]:
+        role = code666_member_role(value)
+        if role:
+            return role
+    return ""
 
 
 def code666_member_gender_group(row):
@@ -9397,6 +9440,7 @@ def code666_member_line(row):
 
 
 def code666_member_list_text():
+    manual_role_map = manual_genealogy_role_map(get_genealogy_content())
     conn = db()
     cur = conn.cursor()
     cur.execute("""
@@ -9411,6 +9455,7 @@ def code666_member_list_text():
         gp.profile_join_date,
         gp.profile_nickname,
         gp.profile_role,
+        gp.form_text,
         gp.updated_at AS profile_updated_at,
         COALESCE(u.is_active, 1) AS is_active,
         gp.updated_at
@@ -9455,7 +9500,7 @@ def code666_member_list_text():
     }
 
     for row in rows:
-        role = code666_member_row_role(row)
+        role = code666_member_row_role(row, manual_role_map)
         if role:
             groups[role].append(row)
         groups[code666_member_gender_group(row)].append(row)
