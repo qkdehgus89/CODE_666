@@ -8801,11 +8801,10 @@ def code666_genealogy_menu_text():
 
 def parse_code666_join_form(text_value):
     text_value = str(text_value or "")
-    if not all(key in text_value for key in ["나이", "성별", "지역"]):
-        return None
-
     fields = {}
-    for line in text_value.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+    raw_lines = [line.strip() for line in text_value.replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.strip()]
+
+    for line in raw_lines:
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
@@ -8814,11 +8813,20 @@ def parse_code666_join_form(text_value):
         if key:
             fields[key] = value
 
-    age = fields.get("나이", "").strip()
-    gender_text = fields.get("성별", "").strip()
-    region = fields.get("지역", "").strip()
-    nickname = fields.get("전에쓰던닉네임", "").strip()
-    experience = fields.get("야방경험유무", "").strip()
+    if fields:
+        age = fields.get("나이", "").strip()
+        gender_text = fields.get("성별", "").strip()
+        region = fields.get("지역", "").strip()
+        nickname = fields.get("전에쓰던닉네임", "").strip()
+        experience = fields.get("야방경험유무", "").strip()
+    else:
+        if len(raw_lines) < 4:
+            return None
+        age = raw_lines[0].strip()
+        gender_text = raw_lines[1].strip()
+        region = raw_lines[2].strip()
+        experience = raw_lines[6].strip() if len(raw_lines) >= 7 else ""
+        nickname = raw_lines[-1].strip()
 
     if not age or not gender_text or not region:
         return None
