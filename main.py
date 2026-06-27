@@ -881,6 +881,7 @@ def init_db():
         profile_join_note TEXT,
         profile_join_date TEXT,
         profile_nickname TEXT,
+        profile_role TEXT,
         source_id TEXT,
         form_text TEXT,
         created_at TEXT NOT NULL,
@@ -917,6 +918,11 @@ def init_db():
     ]:
         if col not in user_cols:
             cur.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type} DEFAULT {default_value}")
+
+    cur.execute("PRAGMA table_info(genealogy_profiles)")
+    genealogy_profile_cols = {row["name"] for row in cur.fetchall()}
+    if "profile_role" not in genealogy_profile_cols:
+        cur.execute("ALTER TABLE genealogy_profiles ADD COLUMN profile_role TEXT")
 
     cur.execute("PRAGMA table_info(purchases)")
     purchase_cols = {row["name"] for row in cur.fetchall()}
@@ -8767,17 +8773,10 @@ def set_genealogy_update_room(source_id, user_name=""):
 
 
 def code666_genealogy_text():
-    content = normalize_genealogy_content(get_genealogy_content())
-    manual_keys = manual_genealogy_member_keys(content)
-    if not manual_keys:
-        return code666_member_list_text()
-
-    auto_text = code666_member_list_text(exclude_member_keys=manual_keys)
     return (
         "📖 자동족보\n"
-        "수동족보에 이미 있는 유저는 제외하고, 자동 등록된 신규/누락 유저만 보여줍니다.\n"
-        "최종 기준은 /수동족보 입니다.\n\n"
-        + auto_text
+        "수동족보를 우선 반영하고, 문답 등록자를 함께 정리한 자동 정리본입니다.\n\n"
+        + code666_member_list_text()
     )
 
 
@@ -8792,7 +8791,7 @@ def code666_genealogy_menu_text():
     return (
         "📖 족보 조회\n\n"
         "/수동족보 - /족보입력 으로 저장한 족보\n"
-        "/자동족보 - 수동족보와 대조한 자동 보충 족보"
+        "/자동족보 - 수동족보 우선 자동 정리본"
     )
 
 
@@ -8895,9 +8894,9 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
     INSERT INTO genealogy_profiles (
         user_id, user_name, gender, is_nomicl,
         profile_age, profile_region, profile_join_note, profile_join_date,
-        profile_nickname, source_id, form_text, created_at, updated_at
+        profile_nickname, profile_role, source_id, form_text, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id)
     DO UPDATE SET
         user_name = excluded.user_name,
@@ -8908,6 +8907,7 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
         profile_join_note = excluded.profile_join_note,
         profile_join_date = excluded.profile_join_date,
         profile_nickname = excluded.profile_nickname,
+        profile_role = COALESCE(NULLIF(genealogy_profiles.profile_role, ''), excluded.profile_role),
         source_id = excluded.source_id,
         form_text = excluded.form_text,
         updated_at = excluded.updated_at
@@ -8921,6 +8921,7 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
         join_note,
         join_date,
         profile_name,
+        "",
         source_id,
         text_value,
         now_str(),
@@ -8994,7 +8995,7 @@ def parse_manual_genealogy_line(line, section):
     raw = strip_coin_suffix(line).strip()
     if not raw or "•" not in raw:
         return None
-    if section not in {"male", "female", "nomicl"}:
+    if section not in {"boss", "underboss", "admin", "viewer", "male", "female", "nomicl"}:
         return None
 
     before_comment, _, comment = raw.partition("//")
@@ -9008,11 +9009,22 @@ def parse_manual_genealogy_line(line, section):
     join_note = parts[3].strip() if len(parts) >= 4 else ""
     join_date = comment.strip() if comment else ""
 
+    if not join_date and join_note:
+        date_match = re.search(r"(\d{1,2}\.\d{1,2})", join_note)
+        if date_match:
+            join_date = date_match.group(1)
+            join_note = join_note.replace(date_match.group(1), "").strip()
+
     if not name or not age or not region:
         return None
 
+    role = section if section in {"boss", "underboss", "admin", "viewer"} else ""
+
     if section == "female":
         gender = "female"
+        is_nomicl = 0
+    elif section in {"boss", "underboss", "admin", "viewer"}:
+        gender = "unknown"
         is_nomicl = 0
     else:
         gender = "male"
@@ -9026,6 +9038,7 @@ def parse_manual_genealogy_line(line, section):
         "join_date": join_date,
         "gender": gender,
         "is_nomicl": is_nomicl,
+        "role": role,
         "raw": raw,
     }
 
@@ -9038,6 +9051,18 @@ def parse_manual_genealogy_profiles(content):
         if not raw:
             continue
         upper = raw.upper()
+        if raw.startswith("𝐁𝐨𝐬𝐬") or upper == "BOSS":
+            section = "boss"
+            continue
+        if raw.startswith("𝐔𝐧𝐝𝐞𝐫𝐛𝐨𝐬𝐬") or upper == "UNDERBOSS":
+            section = "underboss"
+            continue
+        if raw.startswith("𝐀𝐝𝐦𝐢𝐧") or upper == "ADMIN":
+            section = "admin"
+            continue
+        if raw.startswith("𝐕𝐢𝐞𝐰𝐞𝐫") or upper == "VIEWER":
+            section = "viewer"
+            continue
         if "FEMALE" in upper or "🅵" in raw or "🅕" in raw:
             section = "female"
             continue
@@ -9047,7 +9072,7 @@ def parse_manual_genealogy_profiles(content):
         if "MALE" in upper or "🅼" in raw:
             section = "male"
             continue
-        if raw.startswith(("𝐁𝐨𝐬𝐬", "𝐔𝐧𝐝𝐞𝐫𝐛𝐨𝐬𝐬", "𝐀𝐝𝐦𝐢𝐧", "𝐕𝐢𝐞𝐰𝐞𝐫", "OUT", "미분류", "정령")):
+        if raw.startswith(("OUT", "미분류", "정령")):
             section = None
             continue
 
@@ -9074,19 +9099,29 @@ def upsert_genealogy_profile_from_manual(cur, user, parsed):
     INSERT INTO genealogy_profiles (
         user_id, user_name, gender, is_nomicl,
         profile_age, profile_region, profile_join_note, profile_join_date,
-        profile_nickname, source_id, form_text, created_at, updated_at
+        profile_nickname, profile_role, source_id, form_text, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id)
     DO UPDATE SET
         user_name = excluded.user_name,
-        gender = excluded.gender,
-        is_nomicl = excluded.is_nomicl,
+        gender = CASE
+            WHEN excluded.gender != 'unknown' THEN excluded.gender
+            ELSE genealogy_profiles.gender
+        END,
+        is_nomicl = CASE
+            WHEN excluded.gender != 'unknown' THEN excluded.is_nomicl
+            ELSE genealogy_profiles.is_nomicl
+        END,
         profile_age = excluded.profile_age,
         profile_region = excluded.profile_region,
         profile_join_note = excluded.profile_join_note,
         profile_join_date = excluded.profile_join_date,
         profile_nickname = excluded.profile_nickname,
+        profile_role = CASE
+            WHEN excluded.profile_role != '' THEN excluded.profile_role
+            ELSE genealogy_profiles.profile_role
+        END,
         form_text = excluded.form_text,
         updated_at = excluded.updated_at
     """, (
@@ -9099,6 +9134,7 @@ def upsert_genealogy_profile_from_manual(cur, user, parsed):
         parsed["join_note"],
         parsed["join_date"],
         parsed["name"],
+        parsed["role"],
         "manual_genealogy",
         parsed["raw"],
         now_value,
@@ -9147,9 +9183,9 @@ def sync_genealogy_profiles_from_users():
         INSERT INTO genealogy_profiles (
             user_id, user_name, gender, is_nomicl,
             profile_age, profile_region, profile_join_note, profile_join_date,
-            profile_nickname, source_id, form_text, created_at, updated_at
+            profile_nickname, profile_role, source_id, form_text, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id)
         DO UPDATE SET
             user_name = excluded.user_name,
@@ -9160,6 +9196,7 @@ def sync_genealogy_profiles_from_users():
             profile_join_note = excluded.profile_join_note,
             profile_join_date = excluded.profile_join_date,
             profile_nickname = excluded.profile_nickname,
+            profile_role = COALESCE(NULLIF(genealogy_profiles.profile_role, ''), excluded.profile_role),
             source_id = excluded.source_id,
             updated_at = excluded.updated_at
         """, (
@@ -9172,6 +9209,7 @@ def sync_genealogy_profiles_from_users():
             row["profile_join_note"],
             row["profile_join_date"],
             row["profile_nickname"],
+            "",
             row["last_seen_source_id"],
             "",
             row["profile_updated_at"] or row["updated_at"] or now_str(),
@@ -9307,6 +9345,13 @@ def code666_member_role(user_name):
     return ""
 
 
+def code666_member_row_role(row):
+    role = str(row_value(row, "profile_role") or "").strip()
+    if role in {"boss", "underboss", "admin", "viewer"}:
+        return role
+    return code666_member_role(row["user_name"])
+
+
 def code666_member_gender_group(row):
     raw_name = str(row["user_name"] or "")
 
@@ -9351,8 +9396,7 @@ def code666_member_line(row):
     return line
 
 
-def code666_member_list_text(exclude_member_keys=None):
-    exclude_member_keys = exclude_member_keys or set()
+def code666_member_list_text():
     conn = db()
     cur = conn.cursor()
     cur.execute("""
@@ -9366,6 +9410,7 @@ def code666_member_list_text(exclude_member_keys=None):
         gp.profile_join_note,
         gp.profile_join_date,
         gp.profile_nickname,
+        gp.profile_role,
         gp.updated_at AS profile_updated_at,
         COALESCE(u.is_active, 1) AS is_active,
         gp.updated_at
@@ -9378,7 +9423,7 @@ def code666_member_list_text(exclude_member_keys=None):
       AND d.original_user_id IS NULL
     ORDER BY COALESCE(gp.profile_nickname, gp.user_name) ASC
     """)
-    rows = [row for row in cur.fetchall() if not is_manual_genealogy_member(row, exclude_member_keys)]
+    rows = cur.fetchall()
     conn.close()
 
     lines = [
@@ -9410,7 +9455,7 @@ def code666_member_list_text(exclude_member_keys=None):
     }
 
     for row in rows:
-        role = code666_member_role(row["user_name"])
+        role = code666_member_row_role(row)
         if role:
             groups[role].append(row)
         groups[code666_member_gender_group(row)].append(row)
