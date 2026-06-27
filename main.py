@@ -128,7 +128,7 @@ def is_operator_command(text):
 
     exact_commands = {
         "/운영명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
-        "/족보입력", "/족보", "/수동족보", "/자동족보", "/경고", "/완전삭제",
+        "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/경고", "/완전삭제",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -170,6 +170,7 @@ def is_enabled_operator_command(text):
         "/족보",
         "/수동족보",
         "/자동족보",
+        "/족보업데이트방",
         "/완전삭제",
         "/삭제유저",
         "/마디수",
@@ -853,6 +854,15 @@ def init_db():
     CREATE TABLE IF NOT EXISTS genealogy_text (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         content TEXT NOT NULL,
+        updated_by TEXT,
+        updated_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS bot_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT,
         updated_by TEXT,
         updated_at TEXT NOT NULL
     )
@@ -1642,6 +1652,7 @@ def operator_commands_text():
 /족보
 /수동족보
 /자동족보
+/족보업데이트방
 /동반 닉네임
 /초대 닉네임
 
@@ -8658,6 +8669,53 @@ def update_code666_rev_line(content):
     return "\n".join(lines).strip()
 
 
+def get_bot_setting(key, default=""):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM bot_settings WHERE key = ?", (key,))
+    row = cur.fetchone()
+    conn.close()
+    return row["value"] if row and row["value"] is not None else default
+
+
+def set_bot_setting(key, value, updated_by=""):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT INTO bot_settings (key, value, updated_by, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(key)
+    DO UPDATE SET
+        value = excluded.value,
+        updated_by = excluded.updated_by,
+        updated_at = excluded.updated_at
+    """, (key, value, updated_by, now_str()))
+    conn.commit()
+    conn.close()
+
+
+def genealogy_update_source_id():
+    return str(get_bot_setting("genealogy_update_source_id", "") or "").strip()
+
+
+def is_genealogy_update_room(source_id):
+    target_source_id = genealogy_update_source_id()
+    if target_source_id:
+        return source_id == target_source_id
+    return False
+
+
+def set_genealogy_update_room(source_id, user_name=""):
+    if not source_id or source_id == "NO_SOURCE_ID":
+        return "방 ID를 확인하지 못했어요. 단체방 또는 운영할 방에서 다시 입력해 주세요."
+    set_bot_setting("genealogy_update_source_id", source_id, user_name)
+    return (
+        "📖 족보 업데이트방 설정 완료\n\n"
+        "이제 이 방에서 올라오는 문답 양식만 /자동족보 에 반영됩니다.\n"
+        f"방 ID: {source_id}"
+    )
+
+
 def code666_genealogy_text():
     return code666_member_list_text()
 
@@ -9566,9 +9624,10 @@ def handle(event):
 
         try:
             if message_type == "text":
-                join_profile_msg = save_code666_join_profile(user_id, user_name, source_id, message_text)
-                if join_profile_msg:
-                    public_notices.append(join_profile_msg)
+                if is_genealogy_update_room(source_id):
+                    join_profile_msg = save_code666_join_profile(user_id, user_name, source_id, message_text)
+                    if join_profile_msg:
+                        public_notices.append(join_profile_msg)
                 process_mentions(date_str, source_id, user_id, user_name, message_text)
         except Exception as e:
             log_error("TEXT_PROCESS_ERROR", e)
@@ -9599,6 +9658,32 @@ def handle(event):
         return
 
     text = simplified_command_text((event.message.text or "").strip())
+
+    if text == "/족보업데이트방":
+        reply(event.reply_token, set_genealogy_update_room(source_id, user_name))
+        return
+
+    if (text.startswith("/동반 ") or text.startswith("/초대 ")) and (is_operator_room(source_id) or is_genealogy_update_room(source_id)):
+        relation_type = "동반" if text.startswith("/동반 ") else "초대"
+        name = text.replace(f"/{relation_type}", "", 1).strip()
+        if not name:
+            reply(event.reply_token, f"사용법: /{relation_type} 닉네임")
+            return
+        JOKBO_RELATION_PENDING[source_id] = {"type": relation_type, "name": name}
+        reply(
+            event.reply_token,
+            f"📌 족보 메모 대기\n\n다음 문답 등록 대상에게 '{name}{relation_type}'으로 표시할게요."
+        )
+        return
+
+    if is_genealogy_update_room(source_id) and source_id not in count_source_ids() and not text.startswith("/"):
+        try:
+            join_profile_msg = save_code666_join_profile(user_id, user_name, source_id, text)
+            if join_profile_msg:
+                reply(event.reply_token, join_profile_msg)
+                return
+        except Exception as e:
+            log_error("GENEALOGY_UPDATE_ROOM_PROFILE_ERROR", e)
 
     if public_notices and text.startswith("/") and not is_operator_command(text):
         reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices))))
