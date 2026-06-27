@@ -2235,8 +2235,6 @@ def user_debug(keyword):
         c = cur.fetchone()
         cur.execute("SELECT COUNT(*) AS log_count, MAX(created_at) AS last_log FROM chat_logs WHERE user_id=?", (user["user_id"],))
         l = cur.fetchone()
-        cur.execute("SELECT balance FROM currency WHERE user_id=?", (user["user_id"],))
-        b = cur.fetchone()
 
         result.append({
             "user_id": user["user_id"],
@@ -2246,7 +2244,6 @@ def user_debug(keyword):
             "active_days": c["active_days"] if c else 0,
             "log_count": l["log_count"] if l else 0,
             "last_log": l["last_log"] if l else None,
-            "balance": b["balance"] if b else 0,
         })
 
     conn.close()
@@ -2296,10 +2293,8 @@ def all_registered_users_text():
         u.user_id,
         u.user_name,
         COALESCE(u.is_active, 1) AS is_active,
-        COALESCE(c.balance, 0) AS balance,
         u.updated_at
     FROM users u
-    LEFT JOIN currency c ON c.user_id = u.user_id
     ORDER BY COALESCE(u.is_active, 1) DESC, u.user_name ASC
     """)
 
@@ -2320,7 +2315,7 @@ def all_registered_users_text():
     for idx, row in enumerate(rows, 1):
         status = "활성" if int(row["is_active"]) == 1 else "비활성"
         lines.append(
-            f"{idx}. {row['user_name']} / {status} / {coin_text(row['balance'])}"
+            f"{idx}. {row['user_name']} / {status}"
         )
 
     return "\n".join(lines)
@@ -2619,6 +2614,11 @@ def get_balance(user_id):
 
 
 def apply_money_change(cur, user_id, user_name, amount, reason, staff_user_id=None, staff_user_name=None):
+    if not ECONOMY_FEATURE_ENABLED:
+        cur.execute("SELECT balance FROM currency WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        return int(row["balance"] or 0) if row else 0
+
     created_at = now_str()
     cur.execute("""
     INSERT INTO currency (user_id, balance, updated_at)
@@ -2642,6 +2642,9 @@ def apply_money_change(cur, user_id, user_name, amount, reason, staff_user_id=No
 
 
 def change_money(user_id, user_name, amount, reason, staff_user_id=None, staff_user_name=None):
+    if not ECONOMY_FEATURE_ENABLED:
+        return get_balance(user_id)
+
     conn = db()
     cur = conn.cursor()
     balance = apply_money_change(cur, user_id, user_name, amount, reason, staff_user_id, staff_user_name)
@@ -9673,7 +9676,6 @@ def admin_user_detail_text(keyword):
         f"상태: {status}",
         f"USER_ID: {uid}",
         "",
-        f"💰 코인: {coin_text(get_balance(uid))}",
         f"📅 출석: {get_attendance_count(uid)}일",
         f"🏆 업적: {get_achievement_count(uid)}개",
         f"👑 칭호: {get_public_title(uid)}",
@@ -10165,19 +10167,20 @@ def handle(event):
         except Exception as e:
             log_error("PUBLIC_ANNOUNCEMENT_ERROR", e)
 
-        # 히든 미션 자동 체크
-        try:
-            hidden_1000_msg = check_hidden_1000_reward(date_str, source_id, user_id, user_name)
-            if hidden_1000_msg:
-                public_notices.append(hidden_1000_msg)
-            hidden_2000_msg = check_hidden_2000_reward(date_str, source_id, user_id, user_name)
-            if hidden_2000_msg:
-                public_notices.append(hidden_2000_msg)
-            public_notices.extend(check_daily_chat_jackpot_rewards(date_str, source_id, user_id, user_name))
-            for achievement_name, reward in check_chatter_achievements(date_str, source_id, user_id, user_name):
-                public_notices.append(achievement_message(achievement_name, user_name, reward))
-        except Exception as e:
-            log_error("HIDDEN_REWARD_ERROR", e)
+        if ECONOMY_FEATURE_ENABLED:
+            # 히든 미션/잭팟/마디수 업적 자동 보상
+            try:
+                hidden_1000_msg = check_hidden_1000_reward(date_str, source_id, user_id, user_name)
+                if hidden_1000_msg:
+                    public_notices.append(hidden_1000_msg)
+                hidden_2000_msg = check_hidden_2000_reward(date_str, source_id, user_id, user_name)
+                if hidden_2000_msg:
+                    public_notices.append(hidden_2000_msg)
+                public_notices.extend(check_daily_chat_jackpot_rewards(date_str, source_id, user_id, user_name))
+                for achievement_name, reward in check_chatter_achievements(date_str, source_id, user_id, user_name):
+                    public_notices.append(achievement_message(achievement_name, user_name, reward))
+            except Exception as e:
+                log_error("HIDDEN_REWARD_ERROR", e)
 
     if not isinstance(event.message, TextMessageContent):
         if public_notices:
@@ -10188,6 +10191,10 @@ def handle(event):
 
     if text == "/족보업데이트방":
         reply(event.reply_token, set_genealogy_update_room(source_id, user_name))
+        return
+
+    if not ECONOMY_FEATURE_ENABLED and is_economy_command(text):
+        reply(event.reply_token, economy_disabled_text())
         return
 
     if (text.startswith("/동반 ") or text.startswith("/초대 ")) and (is_operator_room(source_id) or is_genealogy_update_room(source_id)):
@@ -10515,7 +10522,6 @@ def handle(event):
             status = "활성" if int(row["is_active"] or 0) == 1 else "비활성"
             lines.append(
                 f"{row['user_name']} / {status}\n"
-                f"코인: {coin_text(row['balance'])}\n"
                 f"총마디: {row['total_count']} / 활동일: {row['active_days']}\n"
                 f"최근로그: {row['last_log'] or '-'}"
             )
@@ -11404,13 +11410,14 @@ if MemberJoinedEvent is not None:
 
 
 # 럭키드로우 자동 정산 스케줄러 시작
-start_lucky_draw_auto_scheduler()
+if ECONOMY_FEATURE_ENABLED:
+    start_lucky_draw_auto_scheduler()
 
 
 
 # 자동 주간정산 스케줄러 시작
 try:
-    if os.getenv("DISABLE_AUTO_WEEKLY_SETTLEMENT", "0") != "1":
+    if ECONOMY_FEATURE_ENABLED and os.getenv("DISABLE_AUTO_WEEKLY_SETTLEMENT", "0") != "1":
         start_weekly_settlement_scheduler()
 except Exception as e:
     log_error("START_WEEKLY_SETTLEMENT_SCHEDULER_ERROR", e)
