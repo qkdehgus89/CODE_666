@@ -9558,10 +9558,6 @@ def code666_member_role(user_name):
 
 
 def code666_member_row_role(row, manual_role_map=None):
-    role = str(row_value(row, "profile_role") or "").strip()
-    if role in {"boss", "underboss", "admin", "viewer"}:
-        return role
-
     manual_role_map = manual_role_map or {}
     if manual_role_map:
         for key in code666_member_compare_keys(row):
@@ -9569,6 +9565,8 @@ def code666_member_row_role(row, manual_role_map=None):
             if role:
                 return role
 
+    # 저장된 profile_role은 과거 동기화 상태가 남을 수 있어 출력 기준으로 사용하지 않습니다.
+    # 현재 수동족보 섹션 또는 닉네임 표식만 역할 판별에 사용합니다.
     for value in [
         row_value(row, "user_name"),
         row_value(row, "profile_nickname"),
