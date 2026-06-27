@@ -2335,8 +2335,9 @@ def all_registered_users_text():
 
     for idx, row in enumerate(rows, 1):
         status = "활성" if int(row["is_active"]) == 1 else "비활성"
+        display_name = str(row["user_name"] or "")[:6]
         lines.append(
-            f"{idx}. {row['user_name']} / {status}"
+            f"{idx}. {display_name} / {status}"
         )
 
     return "\n".join(lines)
