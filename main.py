@@ -175,6 +175,7 @@ def is_enabled_operator_command(text):
         "/족보동기화",
         "/족보인원체크",
         "/미클",
+        "/상점",
         "/완전삭제",
         "/삭제유저",
         "/마디수",
@@ -227,6 +228,10 @@ def is_economy_command(text):
     ]
 
     return text in exact_commands or any(text.startswith(prefix) for prefix in prefix_commands)
+
+
+def is_shop_view_test_command(text, source_id):
+    return text == "/상점" and is_operator_room(source_id)
 
 
 def count_source_ids():
@@ -7808,7 +7813,7 @@ def migrate_old_pieces_to_iron():
 
 def shop_text():
     rows = list_shop_items()
-    lines = ["🛒 상점", ""]
+    lines = ["🛒 상점", "", "운영방 테스트 조회용입니다.", ""]
     if not rows:
         lines.append("현재 판매 중인 상품이 없습니다.")
     else:
@@ -7816,13 +7821,6 @@ def shop_text():
             desc = f"\n{row['description']}" if row["description"] else ""
             lines.append(f"{row['name']} - {coin_text(row['price'])}{desc}")
             lines.append("")
-    lines += [
-        "구매 방법",
-        "/구매 상품명",
-        "",
-        "보유 확인",
-        "/내보유",
-    ]
     return "\n".join(lines)
 
 # =========================
@@ -10423,7 +10421,11 @@ def handle(event):
         reply(event.reply_token, set_genealogy_update_room(source_id, user_name))
         return
 
-    if not ECONOMY_FEATURE_ENABLED and is_economy_command(text):
+    if text == "/상점" and not is_operator_room(source_id):
+        reply(event.reply_token, "⛔ 운영방에서만 사용 가능합니다.")
+        return
+
+    if not ECONOMY_FEATURE_ENABLED and is_economy_command(text) and not is_shop_view_test_command(text, source_id):
         reply(event.reply_token, economy_disabled_text())
         return
 
