@@ -510,6 +510,41 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS nunchi_games (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        started_by_user_id TEXT,
+        started_by_user_name TEXT,
+        started_at TEXT NOT NULL,
+        ended_at TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS nunchi_numbers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_id INTEGER NOT NULL,
+        source_id TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        user_id TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS nunchi_duplicate_checks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_id INTEGER NOT NULL,
+        number INTEGER NOT NULL,
+        scheduled_at TEXT NOT NULL,
+        announced_at TEXT,
+        UNIQUE(game_id, number)
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS truth_game_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
@@ -1698,7 +1733,8 @@ def beginner_guide_text():
 
 사용 가능한 일반 명령어
 /출석
-/주사위"""
+/주사위
+/눈치게임"""
 
 def operator_commands_text():
     return """🔒 운영방 전용 명령어
@@ -1752,6 +1788,7 @@ def all_commands_text():
 ━━━━━━━━━━
 /출석
 /주사위
+/눈치게임
 
 ━━━━━━━━━━
 🔒 운영방 명령어
@@ -1793,6 +1830,172 @@ def all_commands_text():
 /상점
 
 ※ /상점은 운영방 테스트 조회용이며, 구매/코인/가챠/럭키드로우는 사용하지 않습니다."""
+
+
+def nunchi_game_rule_text():
+    return """🎴 눈치게임 룰 설명
+
+🔢 1부터 7까지
+공창에서 순서대로 외쳐주세요!
+
+⚠️ 주의사항
+➤ 한 번에 여러 숫자 ❌
+➤ 중복 숫자 ❌ → 벌칙 😈
+
+🎯 마지막 규칙
+7을 외친 사람은
+👤 참가자 1명 또는
+💬 대화 중인 1명을 지목 가능!
+
+📸 지목된 분은 사진 요청을 받을 수 있어요
+
+❗ 단, 게임 참가자가 아닌 경우
+거부 가능합니다
+
+✨ 그럼…
+
+🎮 게임 시작! 🎮"""
+
+
+def nunchi_game_start(source_id, user_id, user_name):
+    if source_id != COUNT_SOURCE_ID:
+        return "눈치게임은 공창에서 시작해 주세요."
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    UPDATE nunchi_games
+    SET status = 'ended', ended_at = ?
+    WHERE source_id = ? AND status = 'active'
+    """, (now_str(), source_id))
+    cur.execute("""
+    INSERT INTO nunchi_games (
+        source_id, status, started_by_user_id, started_by_user_name, started_at
+    ) VALUES (?, 'active', ?, ?, ?)
+    """, (source_id, user_id, user_name, now_str()))
+    conn.commit()
+    conn.close()
+    return nunchi_game_rule_text()
+
+
+def active_nunchi_game(source_id):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT id
+    FROM nunchi_games
+    WHERE source_id = ? AND status = 'active'
+    ORDER BY id DESC
+    LIMIT 1
+    """, (source_id,))
+    row = cur.fetchone()
+    conn.close()
+    return int(row["id"]) if row else None
+
+
+def schedule_nunchi_duplicate_check(cur, game_id, number):
+    scheduled_at = (datetime.now(KST) + timedelta(seconds=5)).strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute("""
+    INSERT OR IGNORE INTO nunchi_duplicate_checks (
+        game_id, number, scheduled_at
+    ) VALUES (?, ?, ?)
+    """, (game_id, number, scheduled_at))
+
+
+def process_nunchi_number(source_id, user_id, user_name, text_value):
+    text_value = str(text_value or "").strip()
+    if not re.fullmatch(r"[1-7]", text_value):
+        return None
+    if source_id != COUNT_SOURCE_ID:
+        return None
+
+    game_id = active_nunchi_game(source_id)
+    if not game_id:
+        return None
+
+    number = int(text_value)
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT INTO nunchi_numbers (
+        game_id, source_id, number, user_id, user_name, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+    """, (game_id, source_id, number, user_id, user_name, now_str()))
+
+    cur.execute("""
+    SELECT COUNT(*) AS cnt
+    FROM nunchi_numbers
+    WHERE game_id = ? AND number = ?
+    """, (game_id, number))
+    count = int((cur.fetchone() or {"cnt": 0})["cnt"] or 0)
+
+    notice = None
+    if count >= 2:
+        schedule_nunchi_duplicate_check(cur, game_id, number)
+    elif number == 7:
+        cur.execute("""
+        UPDATE nunchi_games
+        SET status = 'ended', ended_at = ?
+        WHERE id = ? AND status = 'active'
+        """, (now_str(), game_id))
+        notice = "🎴 눈치게임\n\n승리하셨습니다!\n벌칙대상을 지목하세요!"
+
+    conn.commit()
+    conn.close()
+    return notice
+
+
+def pop_due_nunchi_notices(source_id):
+    if source_id != COUNT_SOURCE_ID:
+        return []
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT c.id, c.game_id, c.number
+    FROM nunchi_duplicate_checks c
+    JOIN nunchi_games g ON g.id = c.game_id
+    WHERE g.source_id = ?
+      AND c.announced_at IS NULL
+      AND c.scheduled_at <= ?
+    ORDER BY c.id ASC
+    LIMIT 5
+    """, (source_id, now_str()))
+    checks = cur.fetchall()
+
+    notices = []
+    announced_ids = []
+    for check in checks:
+        cur.execute("""
+        SELECT user_name
+        FROM nunchi_numbers
+        WHERE game_id = ? AND number = ?
+        ORDER BY id ASC
+        """, (check["game_id"], check["number"]))
+        names = []
+        seen = set()
+        for row in cur.fetchall():
+            name = display_nickname(row["user_name"])
+            if name and name not in seen:
+                names.append(name)
+                seen.add(name)
+        if len(names) >= 2:
+            name_text = ", ".join(f"{name}님" for name in names)
+            notices.append(
+                "😈 눈치게임 중복 숫자\n\n"
+                f"{name_text} {check['number']} 중복숫자입니다.\n"
+                "벌칙입니다."
+            )
+        announced_ids.append(int(check["id"]))
+
+    if announced_ids:
+        cur.execute(
+            f"UPDATE nunchi_duplicate_checks SET announced_at = ? WHERE id IN ({','.join('?' for _ in announced_ids)})",
+            [now_str()] + announced_ids
+        )
+    conn.commit()
+    conn.close()
+    return notices
 
 # =========================
 # 유저 / 카운트
@@ -10440,12 +10643,16 @@ def handle(event):
                     if join_profile_msg:
                         public_notices.append(join_profile_msg)
                 process_mentions(date_str, source_id, user_id, user_name, message_text)
+                nunchi_msg = process_nunchi_number(source_id, user_id, user_name, message_text)
+                if nunchi_msg:
+                    public_notices.append(nunchi_msg)
         except Exception as e:
             log_error("TEXT_PROCESS_ERROR", e)
 
         try:
             if source_id == COUNT_SOURCE_ID:
                 public_notices.extend(pop_public_announcements(source_id, current_chat_log_id))
+            public_notices.extend(pop_due_nunchi_notices(source_id))
         except Exception as e:
             log_error("PUBLIC_ANNOUNCEMENT_ERROR", e)
 
@@ -11313,7 +11520,7 @@ def handle(event):
     # =========================
     # 유저 명령어
     # =========================
-    enabled_user_commands = {"/출석", "/주사위"}
+    enabled_user_commands = {"/출석", "/주사위", "/눈치게임"}
     if text.startswith("/") and text not in enabled_user_commands:
         return
 
@@ -11331,6 +11538,10 @@ def handle(event):
             "🎲 주사위 결과\n\n"
             f"{display_nickname(user_name)}님: {dice_value}"
         )
+        return
+
+    if text == "/눈치게임":
+        reply_many(event.reply_token, split_text_messages(nunchi_game_start(source_id, user_id, user_name)))
         return
 
     if text == "/마디수":
