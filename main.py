@@ -1086,6 +1086,26 @@ def init_db():
             (now_str(),)
         )
 
+    cur.execute("SELECT value FROM system_flags WHERE key = 'shop_micl_only_reset_v1'")
+    shop_reset_done = cur.fetchone()
+    if not shop_reset_done:
+        created_at = now_str()
+        cur.execute("DELETE FROM purchases")
+        cur.execute("DELETE FROM shop_items")
+        cur.execute("""
+        INSERT INTO shop_items (name, price, description, is_active, created_at)
+        VALUES (?, ?, ?, 1, ?)
+        """, (
+            "미클권",
+            0,
+            "미클 처리용으로 남겨둔 단일 상품입니다.",
+            created_at,
+        ))
+        cur.execute(
+            "INSERT INTO system_flags (key, value) VALUES ('shop_micl_only_reset_v1', ?)",
+            (created_at,)
+        )
+
     cur.execute("SELECT value FROM system_flags WHERE key = 'attendance_day3_reset_v1'")
     attendance_reset_done = cur.fetchone()
     if not attendance_reset_done:
