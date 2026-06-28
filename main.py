@@ -7445,6 +7445,17 @@ def hard_delete_confirm_text(targets):
     return "\n".join(lines)
 
 
+def soft_delete_done_with_hard_confirm_text(targets):
+    lines = ["✅ 닉삭제 완료", ""]
+    if len(targets) == 1:
+        lines.append(f"대상: {targets[0]['user_name']}")
+    else:
+        lines.append("대상")
+        lines.extend([f"- {target['user_name']}" for target in targets])
+    lines += ["", hard_delete_confirm_text(targets)]
+    return "\n".join(lines)
+
+
 
 def jagiya_achievement_notice(user_name, other_name):
     return (
@@ -10775,14 +10786,14 @@ def handle(event):
             changed, name = set_user_active_by_id_with_name(rows[0]["user_id"], 0)
             target = {"user_id": rows[0]["user_id"], "user_name": name or rows[0]["user_name"]}
             DELETE_PENDING[user_id] = {"mode": "deleted_selected", "target": target, "targets": [target]}
-            HARD_DELETE_PENDING.pop(user_id, None)
-            reply(event.reply_token, f"✅ 닉삭제 완료\n\n대상: {target['user_name']}\n\n완전삭제가 필요하면 /완전삭제 를 입력해 주세요.")
+            HARD_DELETE_PENDING[user_id] = {"mode": "hard_delete_confirm", "targets": [target]}
+            reply_many(event.reply_token, split_text_messages(soft_delete_done_with_hard_confirm_text([target])))
             return
 
         deleted, ambiguous, missing = soft_delete_users_by_keywords(keyword)
         if deleted:
             DELETE_PENDING[user_id] = {"mode": "deleted_selected", "targets": deleted, "target": deleted[-1]}
-            HARD_DELETE_PENDING.pop(user_id, None)
+            HARD_DELETE_PENDING[user_id] = {"mode": "hard_delete_confirm", "targets": deleted}
         else:
             DELETE_PENDING.pop(user_id, None)
             HARD_DELETE_PENDING.pop(user_id, None)
@@ -10800,7 +10811,7 @@ def handle(event):
             lines += ["", "찾지 못함"]
             lines.extend([f"- {item}" for item in missing])
         if deleted:
-            lines += ["", "완전삭제가 필요하면 /완전삭제 를 입력해 주세요."]
+            lines += ["", hard_delete_confirm_text(deleted)]
         reply_many(event.reply_token, split_text_messages("\n".join(lines)))
         return
 
@@ -10821,8 +10832,8 @@ def handle(event):
         changed, name = set_user_active_by_id_with_name(target["user_id"], 0)
         selected = {"user_id": target["user_id"], "user_name": name or target["user_name"]}
         DELETE_PENDING[user_id] = {"mode": "deleted_selected", "target": selected, "targets": [selected]}
-        HARD_DELETE_PENDING.pop(user_id, None)
-        reply(event.reply_token, f"✅ 닉삭제 완료\n\n대상: {selected['user_name']}\n\n완전삭제가 필요하면 /완전삭제 를 입력해 주세요.")
+        HARD_DELETE_PENDING[user_id] = {"mode": "hard_delete_confirm", "targets": [selected]}
+        reply_many(event.reply_token, split_text_messages(soft_delete_done_with_hard_confirm_text([selected])))
         return
 
     if text == "/완전삭제":
