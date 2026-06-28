@@ -2894,22 +2894,22 @@ def madi_range_history_text(start_date, end_date, source_id):
     cur = conn.cursor()
     cur.execute("""
     SELECT
-        c.user_id,
-        COALESCE(u.user_name, c.user_name) AS user_name,
-        SUM(c.count) AS count,
-        COUNT(DISTINCT c.date) AS active_days,
+        u.user_id,
+        u.user_name AS user_name,
+        COALESCE(SUM(c.count), 0) AS count,
+        COUNT(DISTINCT CASE WHEN c.count IS NOT NULL THEN c.date END) AS active_days,
         COALESCE(u.is_active, 1) AS is_active
-    FROM counts c
-    LEFT JOIN users u
-      ON u.user_id = c.user_id
+    FROM users u
+    LEFT JOIN counts c
+      ON c.user_id = u.user_id
+     AND c.date BETWEEN ? AND ?
+     AND c.source_id = ?
     LEFT JOIN deleted_users d
-      ON d.original_user_id = c.user_id
-    WHERE c.date BETWEEN ? AND ?
-      AND c.source_id = ?
-      AND d.original_user_id IS NULL
+      ON d.original_user_id = u.user_id
+    WHERE d.original_user_id IS NULL
       AND COALESCE(u.is_active, 1) = 1
-    GROUP BY c.user_id, COALESCE(u.user_name, c.user_name), COALESCE(u.is_active, 1)
-    ORDER BY count DESC, user_name ASC
+    GROUP BY u.user_id, u.user_name, COALESCE(u.is_active, 1)
+    ORDER BY count DESC, u.user_name ASC
     """, (start_date, end_date, source_id))
     rows = cur.fetchall()
     conn.close()
