@@ -9326,12 +9326,50 @@ def parse_code666_join_form(text_value):
     ) else 0
 
     return {
-        "age": age,
+        "age": normalize_code666_birth_year(age),
         "gender": gender,
         "region": region,
         "nickname": nickname,
         "is_nomicl": is_nomicl,
     }
+
+
+def normalize_code666_birth_year(age_value):
+    value = str(age_value or "").strip()
+    if not value:
+        return ""
+
+    # "00/27", "00.27", "00년생 27살"처럼 년생과 나이가 함께 있으면 년생을 우선합니다.
+    birth_match = re.search(r"(?<!\d)(\d{2})(?:\s*(?:년생|/|\\|\.|-|,|\s))", value)
+    if birth_match:
+        return birth_match.group(1)
+
+    explicit_birth = re.search(r"(?<!\d)(\d{2})\s*년생", value)
+    if explicit_birth:
+        return explicit_birth.group(1)
+
+    four_digit = re.search(r"(19\d{2}|20\d{2})", value)
+    if four_digit:
+        return four_digit.group(1)[-2:]
+
+    numbers = re.findall(r"\d+", value)
+    if not numbers:
+        return value
+
+    first = numbers[0]
+    if len(first) == 2:
+        num = int(first)
+        # 단독 2자리 값은 현실적인 나이 범위면 현재 연도 기준 년생으로 환산합니다.
+        # 00~09, 81~99는 족보의 년생 표기로 봅니다.
+        if 10 <= num <= 80 and len(numbers) == 1:
+            birth_year = datetime.now(KST).year - num + 1
+            return f"{birth_year % 100:02d}"
+        return f"{num:02d}"
+
+    if len(first) == 1:
+        return f"{int(first):02d}"
+
+    return first[-2:]
 
 
 def code666_join_date_text():
@@ -9868,7 +9906,7 @@ def genealogy_count_check_text():
 
 def code666_member_display_parts(row):
     profile_name = str(row_value(row, "profile_nickname") or "").strip()
-    profile_age = str(row_value(row, "profile_age") or "").strip()
+    profile_age = normalize_code666_birth_year(row_value(row, "profile_age"))
     profile_region = str(row_value(row, "profile_region") or "").strip()
     if profile_name or profile_age or profile_region:
         return profile_name or display_nickname(row["user_name"]), profile_age or "-", profile_region or "-"
