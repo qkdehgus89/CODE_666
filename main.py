@@ -2689,6 +2689,70 @@ def deactivate_genealogy_profile(user_id):
         conn.close()
 
 
+def delete_genealogy_profiles_by_keyword(keyword, deleted_by):
+    keyword = str(keyword or "").strip()
+    if not keyword:
+        return []
+
+    keyword_keys = {
+        key for key in [clean_keyword(keyword), normalize_mention_name(keyword)]
+        if str(key or "").strip()
+    }
+    if not keyword_keys:
+        return []
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT user_id, user_name, profile_nickname, profile_age, profile_region
+    FROM genealogy_profiles
+    """)
+    rows = cur.fetchall()
+
+    matched = []
+    for row in rows:
+        row_values = [
+            row["user_name"],
+            row["profile_nickname"],
+            display_nickname(row["user_name"]),
+            display_nickname(row["profile_nickname"]),
+        ]
+        row_keys = set()
+        for value in row_values:
+            for key in [clean_keyword(value), normalize_mention_name(value)]:
+                key = str(key or "").strip()
+                if not key:
+                    continue
+                row_keys.add(key)
+                key_without_age = re.sub(r"^\d+", "", key)
+                if key_without_age:
+                    row_keys.add(key_without_age)
+        if not (keyword_keys & row_keys):
+            continue
+        matched.append(dict(row))
+
+    if not matched:
+        conn.close()
+        return []
+
+    for row in matched:
+        deleted_name = row.get("profile_nickname") or row.get("user_name") or keyword
+        cur.execute("DELETE FROM genealogy_profiles WHERE user_id = ?", (row["user_id"],))
+        cur.execute("""
+        INSERT INTO deleted_users (original_user_id, user_name, deleted_by, deleted_at, snapshot_json)
+        VALUES (?, ?, ?, ?, ?)
+        """, (
+            row["user_id"],
+            deleted_name,
+            deleted_by,
+            now_str(),
+            json.dumps({"genealogy_profile": row}, ensure_ascii=False),
+        ))
+    conn.commit()
+    conn.close()
+    return matched
+
+
 def set_user_active_by_id_with_name(user_id, value):
     user = get_user_by_id(user_id)
 
@@ -9377,6 +9441,17 @@ def code666_join_date_text():
     return f"{now_dt.month}.{now_dt.day}"
 
 
+def code666_auto_profile_user_id(profile_name, birth_year, region):
+    key = "|".join([
+        clean_keyword(profile_name),
+        normalize_code666_birth_year(birth_year),
+        clean_keyword(region),
+    ]).strip("|")
+    if not key:
+        key = clean_keyword(profile_name) or "unknown"
+    return f"genealogy:{key}"
+
+
 def save_code666_join_profile(user_id, user_name, source_id, text_value):
     if not user_id:
         return None
@@ -9392,33 +9467,41 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
 
     profile_name = parsed["nickname"] or display_nickname(user_name) or user_name
     join_date = code666_join_date_text()
+    is_update_room = is_genealogy_update_room(source_id)
+    profile_user_id = (
+        code666_auto_profile_user_id(profile_name, parsed["age"], parsed["region"])
+        if is_update_room
+        else user_id
+    )
+    profile_user_name = profile_name if is_update_room else user_name
 
     conn = db()
     cur = conn.cursor()
-    cur.execute("""
-    UPDATE users
-    SET gender = ?,
-        is_nomicl = ?,
-        profile_age = ?,
-        profile_region = ?,
-        profile_join_note = ?,
-        profile_join_date = ?,
-        profile_nickname = ?,
-        profile_updated_at = ?,
-        updated_at = ?
-    WHERE user_id = ?
-    """, (
-        parsed["gender"],
-        parsed["is_nomicl"],
-        parsed["age"],
-        parsed["region"],
-        join_note,
-        join_date,
-        profile_name,
-        now_str(),
-        now_str(),
-        user_id,
-    ))
+    if not is_update_room:
+        cur.execute("""
+        UPDATE users
+        SET gender = ?,
+            is_nomicl = ?,
+            profile_age = ?,
+            profile_region = ?,
+            profile_join_note = ?,
+            profile_join_date = ?,
+            profile_nickname = ?,
+            profile_updated_at = ?,
+            updated_at = ?
+        WHERE user_id = ?
+        """, (
+            parsed["gender"],
+            parsed["is_nomicl"],
+            parsed["age"],
+            parsed["region"],
+            join_note,
+            join_date,
+            profile_name,
+            now_str(),
+            now_str(),
+            user_id,
+        ))
 
     cur.execute("""
     INSERT INTO genealogy_profiles (
@@ -9442,8 +9525,8 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
         form_text = excluded.form_text,
         updated_at = excluded.updated_at
     """, (
-        user_id,
-        user_name,
+        profile_user_id,
+        profile_user_name,
         parsed["gender"],
         parsed["is_nomicl"],
         parsed["age"],
@@ -11177,6 +11260,20 @@ def handle(event):
         if len(keywords) == 1:
             rows = find_users(keyword, limit=10)
             if not rows:
+                deleted_profiles = delete_genealogy_profiles_by_keyword(keyword, user_name)
+                if deleted_profiles:
+                    names = [
+                        row.get("profile_nickname") or row.get("user_name") or keyword
+                        for row in deleted_profiles
+                    ]
+                    reply_many(
+                        event.reply_token,
+                        split_text_messages(
+                            "✅ 자동족보 삭제 완료\n\n"
+                            + "\n".join(f"- {name}" for name in names)
+                        )
+                    )
+                    return
                 reply(event.reply_token, "대상 유저를 찾지 못했어요. 닉네임을 조금만 더 정확히 입력해 주세요.")
                 return
             DELETE_PENDING[user_id] = {"mode": "soft_delete", "candidates": rows}
