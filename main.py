@@ -10421,8 +10421,11 @@ def handle(event):
         reply(event.reply_token, set_genealogy_update_room(source_id, user_name))
         return
 
-    if text == "/상점" and not is_operator_room(source_id):
-        reply(event.reply_token, "⛔ 운영방에서만 사용 가능합니다.")
+    if text == "/상점":
+        if not is_operator_room(source_id):
+            reply(event.reply_token, "⛔ 운영방에서만 사용 가능합니다.")
+            return
+        reply_many(event.reply_token, split_text_messages(shop_text()))
         return
 
     if not ECONOMY_FEATURE_ENABLED and is_economy_command(text) and not is_shop_view_test_command(text, source_id):
