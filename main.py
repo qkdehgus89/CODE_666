@@ -9539,21 +9539,15 @@ def code666_member_display_parts(row):
 def code666_member_role(user_name):
     raw_name = unicodedata.normalize("NFKC", str(user_name or ""))
     normalized = clean_keyword(raw_name)
-    lowered = str(raw_name or "").lower()
+    lowered = str(raw_name or "").strip().lower()
 
-    if "🪩" in raw_name or "방장" in normalized or "보스" in normalized or "boss" in lowered:
+    if lowered == "boss" or normalized == "방장":
         return "boss"
-    if (
-        "🔗" in raw_name
-        or "부방장" in normalized
-        or "언더보스" in normalized
-        or "underboss" in lowered
-        or "under boss" in lowered
-    ):
+    if lowered in {"underboss", "under boss"} or normalized == "부방장":
         return "underboss"
-    if "⚖" in raw_name or "관리자" in normalized or "어드민" in normalized or "admin" in lowered:
+    if lowered == "admin" or normalized == "관리자":
         return "admin"
-    if "🏁" in raw_name or "인증자" in normalized or "뷰어" in normalized or "viewer" in lowered:
+    if lowered == "viewer" or normalized == "인증자":
         return "viewer"
     return ""
 
