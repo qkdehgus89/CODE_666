@@ -9978,6 +9978,10 @@ def code666_member_gender_group(row):
     if "🆇" in raw_name or "👾" in raw_name:
         return "out"
 
+    stored_gender = str(row_value(row, "gender") or "").strip().lower()
+    if stored_gender in ("female", "f", "woman", "여", "여자", "여성"):
+        return "female"
+
     is_nomicl = False
     try:
         is_nomicl = int(row["is_nomicl"] or 0) == 1
@@ -9986,6 +9990,9 @@ def code666_member_gender_group(row):
 
     if "🅜" in raw_name or "🅕" in raw_name or "🔰" in raw_name or "노미클" in clean_keyword(raw_name):
         is_nomicl = True
+
+    if stored_gender in ("male", "m", "man", "남", "남자", "남성", "nomicl", "노미클"):
+        return "nomicl" if is_nomicl else "male"
 
     if "🅵" in raw_name or "🅕" in raw_name:
         gender = "female"
