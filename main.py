@@ -128,7 +128,7 @@ def is_operator_command(text):
         return False
 
     exact_commands = {
-        "/운영명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
+        "/운영명령어", "/전체명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
         "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
@@ -166,6 +166,7 @@ def is_enabled_operator_command(text):
 
     exact_commands = {
         "/운영명령어",
+        "/전체명령어",
         "/전체유저",
         "/족보입력",
         "/족보",
@@ -1702,6 +1703,8 @@ def beginner_guide_text():
 def operator_commands_text():
     return """🔒 운영방 전용 명령어
 
+/전체명령어
+
 ━━━━━━━━━━
 👤 유저 관리
 ━━━━━━━━━━
@@ -1739,6 +1742,57 @@ def operator_commands_text():
 /전체마디수 MM-DD~MM-DD
 
 ※ 운영방에서는 위 명령어만 사용합니다."""
+
+
+def all_commands_text():
+    return """📋 전체 명령어
+
+━━━━━━━━━━
+👥 일반 명령어
+━━━━━━━━━━
+/출석
+/주사위
+
+━━━━━━━━━━
+🔒 운영방 명령어
+━━━━━━━━━━
+/운영명령어
+/전체명령어
+
+👤 유저 관리
+/전체유저
+/유저검색 닉네임
+/유저상세 닉네임
+/닉삭제 닉네임
+/닉삭제 닉네임1 닉네임2
+/닉삭제번호 번호
+/완전삭제
+/삭제유저
+/삭제복구 번호
+
+📖 족보
+/족보입력
+/족보
+/수동족보
+/자동족보
+/족보업데이트방
+/족보동기화
+/족보인원체크
+/동반 닉네임
+/동반 초대한사람 대상자
+/여초 초대한사람 대상자
+/초대 닉네임
+/미클
+
+📊 기록 확인
+/마디수
+/마디수 MM-DD
+/전체마디수 MM-DD~MM-DD
+
+🛒 테스트
+/상점
+
+※ /상점은 운영방 테스트 조회용이며, 구매/코인/가챠/럭키드로우는 사용하지 않습니다."""
 
 # =========================
 # 유저 / 카운트
@@ -10542,6 +10596,13 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
         reply_many(event.reply_token, split_text_messages(operator_commands_text()))
+        return
+
+    if text == "/전체명령어":
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        reply_many(event.reply_token, split_text_messages(all_commands_text()))
         return
 
     if text == "/버전":
