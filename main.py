@@ -2321,6 +2321,7 @@ def all_registered_users_text():
 
     rows = cur.fetchall()
     conn.close()
+    manual_role_map = manual_genealogy_role_map(get_genealogy_content())
 
     lines = [
         "📋 전체 등록 유저",
@@ -2336,8 +2337,10 @@ def all_registered_users_text():
     for idx, row in enumerate(rows, 1):
         status = "활성" if int(row["is_active"]) == 1 else "비활성"
         display_name = str(row["user_name"] or "")[:6]
+        role = code666_member_row_role(row, manual_role_map)
+        role_text = f" / {code666_role_display(role)}" if role else ""
         lines.append(
-            f"{idx}. {display_name} / {status}"
+            f"{idx}. {display_name}{role_text} / {status}"
         )
 
     return "\n".join(lines)
@@ -9550,6 +9553,15 @@ def code666_member_role(user_name):
     if lowered == "viewer" or normalized == "인증자":
         return "viewer"
     return ""
+
+
+def code666_role_display(role):
+    return {
+        "boss": "Boss",
+        "underboss": "Underboss",
+        "admin": "Admin",
+        "viewer": "Viewer",
+    }.get(str(role or "").strip().lower(), "")
 
 
 def code666_member_row_role(row, manual_role_map=None):
