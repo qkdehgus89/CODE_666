@@ -2665,8 +2665,24 @@ def deactivate_genealogy_profile(user_id):
     conn = db()
     cur = conn.cursor()
     try:
+        cur.execute("SELECT user_name FROM users WHERE user_id = ?", (user_id,))
+        user = cur.fetchone()
+        names = []
+        if user and user["user_name"]:
+            names.append(user["user_name"])
+            names.append(display_nickname(user["user_name"]))
+
         cur.execute("DELETE FROM genealogy_profiles WHERE user_id = ?", (user_id,))
         changed = cur.rowcount
+        for name in names:
+            if not name:
+                continue
+            cur.execute("""
+            DELETE FROM genealogy_profiles
+            WHERE user_name = ?
+               OR profile_nickname = ?
+            """, (name, name))
+            changed += cur.rowcount
         conn.commit()
         return changed
     finally:
@@ -9467,6 +9483,40 @@ def is_manual_genealogy_member(row, manual_keys):
     return False
 
 
+def inactive_or_deleted_user_keys():
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT user_name
+    FROM users
+    WHERE COALESCE(is_active, 1) = 0
+    UNION
+    SELECT user_name
+    FROM deleted_users
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    keys = set()
+    for row in rows:
+        for value in [row["user_name"], display_nickname(row["user_name"])]:
+            for key in [clean_keyword(value), normalize_mention_name(value)]:
+                key = str(key or "").strip()
+                if len(key) < 2:
+                    continue
+                keys.add(key)
+                key_without_age = re.sub(r"^\d+", "", key)
+                if len(key_without_age) >= 2:
+                    keys.add(key_without_age)
+    return keys
+
+
+def is_inactive_or_deleted_member(row, blocked_keys):
+    if not blocked_keys:
+        return False
+    return bool(code666_member_compare_keys(row) & blocked_keys)
+
+
 def manual_genealogy_role_map(content):
     roles = {}
     for parsed in parse_manual_genealogy_profiles(content):
@@ -9576,7 +9626,20 @@ def parse_manual_genealogy_profiles(content):
 
 
 def find_active_user_for_manual_genealogy(name):
+    blocked_keys = inactive_or_deleted_user_keys()
+    target_keys = set()
+    for key in [clean_keyword(name), normalize_mention_name(name)]:
+        key = str(key or "").strip()
+        if len(key) >= 2:
+            target_keys.add(key)
+            key_without_age = re.sub(r"^\d+", "", key)
+            if len(key_without_age) >= 2:
+                target_keys.add(key_without_age)
+    if target_keys & blocked_keys:
+        return None, "missing"
+
     candidates = find_active_user_candidates(name, limit=10)
+    candidates = [row for row in candidates if not is_inactive_or_deleted_member(row, blocked_keys)]
     if not candidates:
         return None, "missing"
     best_score = candidates[0]["_match_score"]
@@ -9929,6 +9992,7 @@ def code666_birth_sort_key(row):
 
 def code666_member_list_text():
     manual_role_map = manual_genealogy_role_map(get_genealogy_content())
+    blocked_keys = inactive_or_deleted_user_keys()
     conn = db()
     cur = conn.cursor()
     cur.execute("""
@@ -9988,6 +10052,8 @@ def code666_member_list_text():
     }
 
     for row in rows:
+        if is_inactive_or_deleted_member(row, blocked_keys):
+            continue
         role = code666_member_row_role(row, manual_role_map)
         if role:
             groups[role].append(row)
