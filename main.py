@@ -545,6 +545,18 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS fortune_cookies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        fortune_text TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(date, user_id)
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS truth_game_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
@@ -1734,7 +1746,8 @@ def beginner_guide_text():
 사용 가능한 일반 명령어
 /출석
 /주사위
-/눈치게임"""
+/눈치게임
+/포춘쿠키"""
 
 def operator_commands_text():
     return """🔒 운영방 전용 명령어
@@ -1789,6 +1802,7 @@ def all_commands_text():
 /출석
 /주사위
 /눈치게임
+/포춘쿠키
 
 ━━━━━━━━━━
 🔒 운영방 명령어
@@ -1855,6 +1869,49 @@ def nunchi_game_rule_text():
 ✨ 그럼…
 
 🎮 게임 시작! 🎮"""
+
+
+FORTUNE_COOKIE_MESSAGES = [
+    "오늘은 말 한마디가 분위기를 바꿉니다.",
+    "가볍게 던진 농담이 좋은 흐름을 만들 수 있어요.",
+    "기다리던 답은 생각보다 가까운 곳에 있습니다.",
+    "오늘은 먼저 웃어주는 사람이 이깁니다.",
+    "괜히 신경 쓰이는 사람이 있다면 이유가 있을지도요.",
+    "작은 용기가 오늘의 운을 살짝 밀어줍니다.",
+    "눈치보다가 타이밍을 놓치지 마세요.",
+    "오늘의 행운은 늦은 대화 속에 숨어 있습니다.",
+    "무리하지 않아도 충분히 눈에 띄는 날입니다.",
+    "마음이 가는 쪽으로 한 걸음만 움직여보세요.",
+]
+
+
+def fortune_cookie_text(date_str, user_id, user_name):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT fortune_text
+    FROM fortune_cookies
+    WHERE date = ? AND user_id = ?
+    """, (date_str, user_id))
+    row = cur.fetchone()
+    if row:
+        conn.close()
+        return "그만먹어 살쪄"
+
+    fortune = random.choice(FORTUNE_COOKIE_MESSAGES)
+    cur.execute("""
+    INSERT INTO fortune_cookies (
+        date, user_id, user_name, fortune_text, created_at
+    ) VALUES (?, ?, ?, ?, ?)
+    """, (date_str, user_id, user_name, fortune, now_str()))
+    conn.commit()
+    conn.close()
+
+    return (
+        "🥠 포춘쿠키\n\n"
+        f"{display_nickname(user_name)}님의 오늘 운세\n"
+        f"{fortune}"
+    )
 
 
 def nunchi_game_start(source_id, user_id, user_name):
@@ -11728,7 +11785,7 @@ def handle(event):
     # =========================
     # 유저 명령어
     # =========================
-    enabled_user_commands = {"/출석", "/주사위", "/눈치게임"}
+    enabled_user_commands = {"/출석", "/주사위", "/눈치게임", "/포춘쿠키"}
     if text.startswith("/") and text not in enabled_user_commands:
         return
 
@@ -11750,6 +11807,10 @@ def handle(event):
 
     if text == "/눈치게임":
         reply_many(event.reply_token, split_text_messages(nunchi_game_start(source_id, user_id, user_name)))
+        return
+
+    if text == "/포춘쿠키":
+        reply(event.reply_token, fortune_cookie_text(date_str, user_id, user_name))
         return
 
     if text == "/마디수":
