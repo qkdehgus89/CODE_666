@@ -135,6 +135,7 @@ def is_operator_command(text):
     exact_commands = {
         "/운영명령어", "/전체명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
         "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
+        "/족보삭제", "/족보수정", "/족보분류",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -150,6 +151,7 @@ def is_operator_command(text):
     prefix_commands = [
         "/유저검색 ", "/유저상세 ", "/닉삭제", "/닉삭제번호",
         "/동반 ", "/초대 ", "/여초 ",
+        "/족보삭제 ", "/족보수정 ", "/족보분류 ",
         "/지급 ", "/차감 ", "/코인내역 ", "/삭제복구",
         "/구매 ", "/가챠 ",
         "/회생초기화 ",
@@ -180,6 +182,9 @@ def is_enabled_operator_command(text):
         "/족보업데이트방",
         "/족보동기화",
         "/족보인원체크",
+        "/족보삭제",
+        "/족보수정",
+        "/족보분류",
         "/미클",
         "/상점",
         "/완전삭제",
@@ -195,6 +200,9 @@ def is_enabled_operator_command(text):
         "/동반 ",
         "/초대 ",
         "/여초 ",
+        "/족보삭제 ",
+        "/족보수정 ",
+        "/족보분류 ",
         "/삭제복구",
         "/마디수 ",
         "/전체마디수 ",
@@ -1810,6 +1818,9 @@ def operator_commands_text():
 /족보업데이트방
 /족보동기화
 /족보인원체크
+/족보수정 남/녀/노미클 기존닉 새닉
+/족보삭제 남/녀/노미클 닉네임
+/족보분류 닉네임 남/녀/노미클
 /동반 닉네임
 /동반 초대한사람 대상자
 /여초 초대한사람 대상자
@@ -1863,6 +1874,9 @@ def all_commands_text():
 /족보업데이트방
 /족보동기화
 /족보인원체크
+/족보수정 남/녀/노미클 기존닉 새닉
+/족보삭제 남/녀/노미클 닉네임
+/족보분류 닉네임 남/녀/노미클
 /동반 닉네임
 /동반 초대한사람 대상자
 /여초 초대한사람 대상자
@@ -10363,6 +10377,287 @@ def cleanup_code666_blank_region_duplicates(cur=None):
             conn.close()
 
 
+def genealogy_profile_match_score(row, keyword):
+    keyword_clean = clean_keyword(keyword)
+    if not keyword_clean:
+        return 0
+
+    name, birth, region = code666_member_display_parts(row)
+    values = [
+        row_value(row, "profile_nickname"),
+        row_value(row, "user_name"),
+        name,
+    ]
+    keys = set()
+    for value in values:
+        value_clean = clean_keyword(strip_coin_suffix(value))
+        if not value_clean:
+            continue
+        keys.add(value_clean)
+        without_age = re.sub(r"^\d+", "", value_clean)
+        if without_age:
+            keys.add(without_age)
+
+    if keyword_clean in keys:
+        return 100
+    if any(key.startswith(keyword_clean) or keyword_clean.startswith(key) for key in keys if len(key) >= 2):
+        return 70
+    if any(keyword_clean in key for key in keys if len(keyword_clean) >= 2):
+        return 40
+    return 0
+
+
+def parse_genealogy_category(value):
+    clean = clean_keyword(value)
+    if clean in {"남", "남자", "남성", "남미클", "미클남", "남자미클", "male", "m"}:
+        return {"key": "male", "label": "남", "gender": "male", "is_nomicl": 0}
+    if clean in {"여", "녀", "여자", "여성", "여미클", "미클여", "미클녀", "여자미클", "female", "f"}:
+        return {"key": "female", "label": "여", "gender": "female", "is_nomicl": 0}
+    if clean in {"노미클", "남노미클", "노미클남", "남자노미클", "nomicl"}:
+        return {"key": "nomicl", "label": "노미클", "gender": "male", "is_nomicl": 1}
+    if clean in {"여노미클", "노미클여", "노미클녀", "여자노미클"}:
+        return {"key": "nomicl_female", "label": "여노미클", "gender": "female", "is_nomicl": 1}
+    return None
+
+
+def genealogy_category_label(category):
+    if not category:
+        return "전체"
+    return category.get("label") or category.get("key") or "전체"
+
+
+def genealogy_profile_matches_category(row, category):
+    if not category:
+        return True
+    group = code666_member_gender_group(row)
+    if category["key"] in {"nomicl", "nomicl_female"}:
+        if group != "nomicl":
+            return False
+        if category["key"] == "nomicl_female":
+            return str(row_value(row, "gender") or "").strip().lower() == "female"
+        return True
+    return group == category["key"]
+
+
+def find_genealogy_profile_matches(keyword, category=None):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT rowid, *
+    FROM genealogy_profiles
+    """)
+    rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
+
+    matches = []
+    for row in rows:
+        if not genealogy_profile_matches_category(row, category):
+            continue
+        score = genealogy_profile_match_score(row, keyword)
+        if score:
+            matches.append((score, row))
+
+    matches.sort(
+        key=lambda item: (
+            -item[0],
+            code666_birth_sort_key(item[1]),
+            str(row_value(item[1], "updated_at") or ""),
+        )
+    )
+    return matches
+
+
+def genealogy_profile_brief(row):
+    name, birth, region = code666_member_display_parts(row)
+    return f"{name} • {birth} • {region} ({code666_member_gender_group(row)})"
+
+
+def rename_genealogy_profile(old_keyword, new_name, category=None, updated_by=""):
+    old_keyword = str(old_keyword or "").strip()
+    new_name = strip_coin_suffix(new_name).strip()
+    if not old_keyword or not new_name:
+        return "사용법: /족보수정 남/녀/노미클 기존닉 새닉"
+
+    matches = find_genealogy_profile_matches(old_keyword, category)
+    if not matches:
+        return f"📖 족보 수정 실패\n\n대상을 찾지 못했어요.\n분류: {genealogy_category_label(category)}\n검색어: {old_keyword}"
+
+    top_score = matches[0][0]
+    selected = [row for score, row in matches if score == top_score]
+    if top_score < 100 and len(selected) > 1:
+        lines = [
+            "📖 족보 수정 확인 필요",
+            "",
+            "비슷한 대상이 여러 명입니다. 더 정확히 입력해 주세요.",
+            "",
+        ]
+        for idx, row in enumerate(selected[:10], 1):
+            lines.append(f"{idx}. {genealogy_profile_brief(row)}")
+        return "\n".join(lines)
+
+    conn = db()
+    cur = conn.cursor()
+    changed = 0
+    before_lines = []
+    for row in selected:
+        before_lines.append(genealogy_profile_brief(row))
+        gender = category["gender"] if category else row_value(row, "gender")
+        is_nomicl = category["is_nomicl"] if category else row_value(row, "is_nomicl")
+        cur.execute("""
+        UPDATE genealogy_profiles
+        SET user_name = ?,
+            profile_nickname = ?,
+            gender = ?,
+            is_nomicl = ?,
+            form_text = '',
+            updated_at = ?
+        WHERE rowid = ?
+        """, (new_name, new_name, gender, is_nomicl, now_str(), int(row["rowid"])))
+        changed += cur.rowcount
+    conn.commit()
+    conn.close()
+
+    cleanup_code666_blank_region_duplicates()
+
+    return (
+        "📖 족보 수정 완료\n\n"
+        f"분류: {genealogy_category_label(category)}\n"
+        f"변경 전: {', '.join(before_lines)}\n"
+        f"변경 후: {new_name}\n"
+        f"처리: {changed}건\n\n"
+        "조회: /자동족보"
+    )
+
+
+def delete_genealogy_profile_only(keyword, category=None, deleted_by=""):
+    keyword = str(keyword or "").strip()
+    if not keyword:
+        return "사용법: /족보삭제 남/녀/노미클 닉네임"
+
+    matches = find_genealogy_profile_matches(keyword, category)
+    if not matches:
+        return f"📖 족보 삭제 실패\n\n대상을 찾지 못했어요.\n분류: {genealogy_category_label(category)}\n검색어: {keyword}"
+
+    top_score = matches[0][0]
+    selected = [row for score, row in matches if score == top_score]
+    if top_score < 100 and len(selected) > 1:
+        lines = [
+            "📖 족보 삭제 확인 필요",
+            "",
+            "비슷한 대상이 여러 명입니다. 더 정확히 입력해 주세요.",
+            "",
+        ]
+        for idx, row in enumerate(selected[:10], 1):
+            lines.append(f"{idx}. {genealogy_profile_brief(row)}")
+        return "\n".join(lines)
+
+    conn = db()
+    cur = conn.cursor()
+    deleted_lines = []
+    for row in selected:
+        deleted_lines.append(genealogy_profile_brief(row))
+        cur.execute("DELETE FROM genealogy_profiles WHERE rowid = ?", (int(row["rowid"]),))
+    conn.commit()
+    conn.close()
+
+    return (
+        "📖 족보 삭제 완료\n\n"
+        f"분류: {genealogy_category_label(category)}\n"
+        + "\n".join(f"- {line}" for line in deleted_lines)
+        + "\n\n유저 DB는 건드리지 않았습니다.\n조회: /자동족보"
+    )
+
+
+def set_genealogy_profile_category(keyword, category, updated_by=""):
+    keyword = str(keyword or "").strip()
+    if not keyword or not category:
+        return "사용법: /족보분류 닉네임 남/녀/노미클"
+
+    matches = find_genealogy_profile_matches(keyword)
+    if not matches:
+        return f"📖 족보 분류 실패\n\n대상을 찾지 못했어요.\n검색어: {keyword}"
+
+    top_score = matches[0][0]
+    selected = [row for score, row in matches if score == top_score]
+    if top_score < 100 and len(selected) > 1:
+        lines = ["📖 족보 분류 확인 필요", "", "비슷한 대상이 여러 명입니다. 더 정확히 입력해 주세요.", ""]
+        for idx, row in enumerate(selected[:10], 1):
+            lines.append(f"{idx}. {genealogy_profile_brief(row)}")
+        return "\n".join(lines)
+
+    conn = db()
+    cur = conn.cursor()
+    changed = 0
+    before_lines = []
+    for row in selected:
+        before_lines.append(genealogy_profile_brief(row))
+        cur.execute("""
+        UPDATE genealogy_profiles
+        SET gender = ?,
+            is_nomicl = ?,
+            form_text = '',
+            updated_at = ?
+        WHERE rowid = ?
+        """, (category["gender"], category["is_nomicl"], now_str(), int(row["rowid"])))
+        changed += cur.rowcount
+    conn.commit()
+    conn.close()
+
+    cleanup_code666_blank_region_duplicates()
+
+    return (
+        "📖 족보 분류 완료\n\n"
+        f"대상: {', '.join(before_lines)}\n"
+        f"분류: {genealogy_category_label(category)}\n"
+        f"처리: {changed}건\n\n"
+        "조회: /자동족보"
+    )
+
+
+def parse_genealogy_edit_args(raw, mode):
+    parts = str(raw or "").split()
+    if mode == "rename":
+        if len(parts) < 2:
+            return None, "", "", "사용법: /족보수정 남/녀/노미클 기존닉 새닉"
+        category = parse_genealogy_category(parts[0])
+        if category:
+            if len(parts) < 3:
+                return None, "", "", "사용법: /족보수정 남/녀/노미클 기존닉 새닉"
+            return category, parts[1], parts[2], None
+        trailing_category = parse_genealogy_category(parts[-1])
+        if trailing_category and len(parts) >= 3:
+            return trailing_category, parts[0], parts[1], None
+        return None, parts[0], parts[1], None
+
+    if mode == "delete":
+        if not parts:
+            return None, "", "", "사용법: /족보삭제 남/녀/노미클 닉네임"
+        category = parse_genealogy_category(parts[0])
+        if category:
+            if len(parts) < 2:
+                return None, "", "", "사용법: /족보삭제 남/녀/노미클 닉네임"
+            return category, parts[1], "", None
+        trailing_category = parse_genealogy_category(parts[-1])
+        if trailing_category and len(parts) >= 2:
+            return trailing_category, parts[0], "", None
+        return None, parts[0], "", None
+
+    if mode == "category":
+        if len(parts) < 2:
+            return None, "", "", "사용법: /족보분류 닉네임 남/녀/노미클"
+        category = parse_genealogy_category(parts[0])
+        if category:
+            if len(parts) < 2:
+                return None, "", "", "사용법: /족보분류 남/녀/노미클 닉네임"
+            return category, parts[1], "", None
+        category = parse_genealogy_category(parts[-1])
+        if not category:
+            return None, "", "", "분류는 남, 여, 노미클 중 하나로 입력해 주세요."
+        return category, parts[0], "", None
+
+    return None, "", "", "사용법을 확인해 주세요."
+
+
 def manual_genealogy_member_keys(content):
     keys = set()
     for line in normalize_genealogy_content(content).split("\n"):
@@ -12104,6 +12399,39 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
         reply_many(event.reply_token, split_text_messages(genealogy_count_check_text()))
+        return
+
+    if text == "/족보수정" or text.startswith("/족보수정 "):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        category, old_keyword, new_name, err = parse_genealogy_edit_args(text.replace("/족보수정", "", 1).strip(), "rename")
+        if err:
+            reply(event.reply_token, err)
+            return
+        reply_many(event.reply_token, split_text_messages(rename_genealogy_profile(old_keyword, new_name, category, user_name)))
+        return
+
+    if text == "/족보삭제" or text.startswith("/족보삭제 "):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        category, keyword, _, err = parse_genealogy_edit_args(text.replace("/족보삭제", "", 1).strip(), "delete")
+        if err:
+            reply(event.reply_token, err)
+            return
+        reply_many(event.reply_token, split_text_messages(delete_genealogy_profile_only(keyword, category, user_name)))
+        return
+
+    if text == "/족보분류" or text.startswith("/족보분류 "):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        category, keyword, _, err = parse_genealogy_edit_args(text.replace("/족보분류", "", 1).strip(), "category")
+        if err:
+            reply(event.reply_token, err)
+            return
+        reply_many(event.reply_token, split_text_messages(set_genealogy_profile_category(keyword, category, user_name)))
         return
 
     if text.startswith("/유저검색 "):
