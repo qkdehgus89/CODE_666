@@ -11887,7 +11887,7 @@ def handle(event):
         return
 
     if text == "/주사위":
-        dice_value = random.randint(0, 99)
+        dice_value = random.randint(0, 100)
         reply(
             event.reply_token,
             "🎲 주사위 결과\n\n"
