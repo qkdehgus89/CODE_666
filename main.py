@@ -11235,6 +11235,15 @@ def handle(event):
 
     text = simplified_command_text((event.message.text or "").strip())
 
+    if text == "/주사위":
+        dice_value = random.randint(0, 100)
+        reply(
+            event.reply_token,
+            "🎲 주사위 결과\n\n"
+            f"{display_nickname(user_name)}님: {dice_value}"
+        )
+        return
+
     if text == "/족보업데이트방":
         reply(event.reply_token, set_genealogy_update_room(source_id, user_name))
         return
