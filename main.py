@@ -1767,14 +1767,20 @@ def user_summary_text(user_id, user_name):
 
 
 def beginner_guide_text():
-    return """📖 S.N.S 가이드
+    return """📖 CODE 명령어
 
 사용 가능한 일반 명령어
 /출석
 /주사위
 /눈치게임
 /포춘쿠키
-/코드쿠키"""
+/코드쿠키
+
+간단 자동답변
+/ㅁㄴ, ㅁㄴ - 매너봉
+/ㅊㄷ - 초대자 있을 때
+ㄷㅌ, /ㄷㅌ - 담타 시작할 때
+/ㅂㅇ - 누군가 나갔을 때"""
 
 def operator_commands_text():
     return """🔒 운영방 전용 명령어
@@ -12370,8 +12376,12 @@ def handle(event):
     # =========================
     # 유저 명령어
     # =========================
-    enabled_user_commands = {"/출석", "/주사위", "/눈치게임", "/포춘쿠키", "/코드쿠키"}
+    enabled_user_commands = {"/출석", "/주사위", "/눈치게임", "/포춘쿠키", "/코드쿠키", "/명령어", "/가이드"}
     if text.startswith("/") and text not in enabled_user_commands:
+        return
+
+    if text == "/명령어":
+        reply_many(event.reply_token, split_text_messages(beginner_guide_text()))
         return
 
     if text == "/가이드":
