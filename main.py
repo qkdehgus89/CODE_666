@@ -9710,7 +9710,11 @@ def code666_genealogy_menu_text():
 def parse_code666_join_form(text_value):
     text_value = str(text_value or "")
     fields = {}
-    raw_lines = [line.strip() for line in text_value.replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.strip()]
+    raw_lines = [
+        line.strip()
+        for line in text_value.replace("：", ":").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        if line.strip()
+    ]
 
     for line in raw_lines:
         if ":" not in line:
@@ -9727,14 +9731,19 @@ def parse_code666_join_form(text_value):
             if key in fields and str(fields[key]).strip():
                 return str(fields[key]).strip()
             for saved_key, saved_value in fields.items():
-                if str(saved_key).startswith(key) and str(saved_value).strip():
+                saved_key = str(saved_key or "")
+                if (
+                    saved_key.startswith(key)
+                    or key.startswith(saved_key)
+                    or key in saved_key
+                ) and str(saved_value).strip():
                     return str(saved_value).strip()
         return ""
 
     if fields:
         age = field_value("나이")
         gender_text = field_value("성별")
-        region = field_value("지역")
+        region = field_value("지역", "사는지역", "거주지역", "활동지역")
         previous_nickname = field_value("전에쓰던닉네임")
         nickname = (
             field_value("사용할닉네임")
