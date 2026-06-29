@@ -56,6 +56,7 @@ CURRENCY_NAME = os.getenv("CURRENCY_NAME", "코인").strip()
 BOT_VERSION = "sns-flowerbot-v10.6"
 BOT_USER_ID = os.getenv("BOT_USER_ID", "").strip()
 ECONOMY_FEATURE_ENABLED = False
+AFFINITY_REWARD_FEATURE_ENABLED = False
 
 # 1코인 = 10포인트, 0.2코인 = 2포인트
 COIN_SCALE = 10
@@ -5810,7 +5811,13 @@ AFFINITY_ACHIEVEMENT_MILESTONES = [
     (300, "affinity_300", "💖 단짝", 10),
 ]
 
-EXCLUDED_ACHIEVEMENT_KEYS = {"".join(("boun", "ty_complete"))}
+EXCLUDED_ACHIEVEMENT_KEYS = {
+    "".join(("boun", "ty_complete")),
+    "affinity_50",
+    "affinity_100",
+    "affinity_300",
+    "jagiya",
+}
 
 
 def grant_achievement_once(user_id, user_name, achievement_key, achievement_name, reward=0, meta=""):
@@ -8067,35 +8074,36 @@ def process_affinity_message(source_id, user_id, user_name, text_value):
 
     messages = []
 
-    try:
-        milestone_msg = grant_affinity_milestone_achievements_if_ready(
-            user_id, user_name,
-            last["user_id"], last["user_name"],
-            cumulative_score
-        )
-        if milestone_msg:
-            messages.append(milestone_msg)
+    if AFFINITY_REWARD_FEATURE_ENABLED:
+        try:
+            milestone_msg = grant_affinity_milestone_achievements_if_ready(
+                user_id, user_name,
+                last["user_id"], last["user_name"],
+                cumulative_score
+            )
+            if milestone_msg:
+                messages.append(milestone_msg)
 
-        jagiya_msg = grant_jagiya_achievement_if_ready(
-            user_id, user_name,
-            last["user_id"], last["user_name"],
-            cumulative_score
-        )
-        if jagiya_msg:
-            messages.append(jagiya_msg)
-    except Exception as e:
-        print("AFFINITY_ACHIEVEMENT_ERROR:", repr(e))
+            jagiya_msg = grant_jagiya_achievement_if_ready(
+                user_id, user_name,
+                last["user_id"], last["user_name"],
+                cumulative_score
+            )
+            if jagiya_msg:
+                messages.append(jagiya_msg)
+        except Exception as e:
+            print("AFFINITY_ACHIEVEMENT_ERROR:", repr(e))
 
-    try:
-        msg1 = complete_manitto_if_ready(user_id, user_name, last["user_id"])
-        if msg1:
-            messages.append(msg1)
+        try:
+            msg1 = complete_manitto_if_ready(user_id, user_name, last["user_id"])
+            if msg1:
+                messages.append(msg1)
 
-        msg2 = complete_manitto_if_ready(last["user_id"], last["user_name"], user_id)
-        if msg2:
-            messages.append(msg2)
-    except Exception as e:
-        print("MANITTO_COMPLETE_CHECK_ERROR:", repr(e))
+            msg2 = complete_manitto_if_ready(last["user_id"], last["user_name"], user_id)
+            if msg2:
+                messages.append(msg2)
+        except Exception as e:
+            print("MANITTO_COMPLETE_CHECK_ERROR:", repr(e))
 
     if messages:
         return "\n".join(dict.fromkeys(messages))
@@ -8107,6 +8115,9 @@ def grant_affinity_milestone_achievements_if_ready(user_id_1, user_name_1, user_
     한 상대와 누적 친밀도 단계 달성 시 양쪽에게 업적을 지급합니다.
     각 단계는 유저별 최초 1회만 지급됩니다.
     """
+    if not AFFINITY_REWARD_FEATURE_ENABLED:
+        return None
+
     total_score = int(total_score or 0)
     unlocked = []
 
@@ -8873,6 +8884,9 @@ def grant_jagiya_achievement_if_ready(user_id_1, user_name_1, user_id_2, user_na
     양쪽에게 '자기야' 업적과 3코인을 지급합니다.
     achievement_key에 상대 user_id를 포함해 같은 상대와는 1회만 지급합니다.
     """
+    if not AFFINITY_REWARD_FEATURE_ENABLED:
+        return None
+
     if int(total_score or 0) < AFFINITY_CUMULATIVE_JAGIYA_SCORE:
         return None
 
