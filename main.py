@@ -60,6 +60,10 @@ AFFINITY_REWARD_FEATURE_ENABLED = False
 
 # 1코인 = 10포인트, 0.2코인 = 2포인트
 COIN_SCALE = 10
+MICL_MALE_MARK = "\U0001F17C"      # 🅼
+MICL_FEMALE_MARK = "\U0001F175"    # 🅵
+NOMICL_MALE_MARK = "\U0001F15C"    # 🅜
+NOMICL_FEMALE_MARK = "\U0001F155"  # 🅕
 
 
 def coin_to_points(value):
@@ -2405,6 +2409,16 @@ def gender_from_text_markers(text_value):
     if "🔹" in text_value or "남미클" in clean or "남자" in clean or "남성" in clean or "남" in tokens:
         return "male"
 
+    return None
+
+
+def micl_status_from_name_markers(text_value):
+    text_value = str(text_value or "")
+    clean = clean_keyword(text_value)
+    if NOMICL_MALE_MARK in text_value or NOMICL_FEMALE_MARK in text_value or "🔰" in text_value or "노미클" in clean:
+        return "nomicl"
+    if MICL_MALE_MARK in text_value or MICL_FEMALE_MARK in text_value:
+        return "micl"
     return None
 
 
@@ -9769,6 +9783,32 @@ def code666_auto_profile_user_id(profile_name, birth_year, region):
     return f"genealogy:{key}"
 
 
+def apply_current_user_micl_markers(parsed, profile_name):
+    try:
+        rows = find_users(profile_name, limit=5)
+        if not rows:
+            return parsed
+        best = rows[0]
+        marker = micl_status_from_name_markers(best.get("user_name"))
+        if not marker:
+            return parsed
+
+        parsed = dict(parsed)
+        marker_gender = gender_from_text_markers(best.get("user_name"))
+        if marker_gender:
+            parsed["gender"] = marker_gender
+        if marker == "micl":
+            parsed["is_nomicl"] = 0
+        elif marker == "nomicl":
+            parsed["is_nomicl"] = 1
+            if not marker_gender:
+                parsed["gender"] = "male"
+        return parsed
+    except Exception as e:
+        log_error("CODE666_MICL_MARKER_APPLY_ERROR", e)
+        return parsed
+
+
 def save_code666_join_profile(user_id, user_name, source_id, text_value):
     if not user_id:
         return None
@@ -9783,6 +9823,7 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
         join_note = f"{relation['name']}{relation['type']}"
 
     profile_name = parsed["nickname"] or display_nickname(user_name) or user_name
+    parsed = apply_current_user_micl_markers(parsed, profile_name)
     join_date = code666_join_date_text()
     is_update_room = is_genealogy_update_room(source_id)
     profile_user_id = (
@@ -10378,25 +10419,30 @@ def code666_member_gender_group(row):
     if "🆇" in raw_name or "👾" in raw_name:
         return "out"
 
-    stored_gender = str(row_value(row, "gender") or "").strip().lower()
-    if stored_gender in ("female", "f", "woman", "여", "여자", "여성"):
-        return "female"
-
     is_nomicl = False
     try:
         is_nomicl = int(row["is_nomicl"] or 0) == 1
     except Exception:
         is_nomicl = False
 
-    if "🅜" in raw_name or "🅕" in raw_name or "🔰" in raw_name or "노미클" in clean_keyword(raw_name):
+    if (
+        NOMICL_MALE_MARK in raw_name
+        or NOMICL_FEMALE_MARK in raw_name
+        or "🔰" in raw_name
+        or "노미클" in clean_keyword(raw_name)
+    ):
         is_nomicl = True
+
+    stored_gender = str(row_value(row, "gender") or "").strip().lower()
+    if stored_gender in ("female", "f", "woman", "여", "여자", "여성"):
+        return "nomicl" if is_nomicl else "female"
 
     if stored_gender in ("male", "m", "man", "남", "남자", "남성", "nomicl", "노미클"):
         return "nomicl" if is_nomicl else "male"
 
-    if "🅵" in raw_name or "🅕" in raw_name:
+    if MICL_FEMALE_MARK in raw_name or NOMICL_FEMALE_MARK in raw_name:
         gender = "female"
-    elif "🅼" in raw_name or "🅜" in raw_name:
+    elif MICL_MALE_MARK in raw_name or NOMICL_MALE_MARK in raw_name:
         gender = "male"
     else:
         gender = effective_user_gender(row, raw_name)
