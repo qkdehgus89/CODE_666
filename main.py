@@ -9735,9 +9735,10 @@ def parse_code666_join_form(text_value):
         age = field_value("나이")
         gender_text = field_value("성별")
         region = field_value("지역")
+        previous_nickname = field_value("전에쓰던닉네임")
         nickname = (
             field_value("사용할닉네임")
-            or field_value("전에쓰던닉네임")
+            or previous_nickname
         )
         experience = field_value("야방경험유무")
     else:
@@ -9748,6 +9749,7 @@ def parse_code666_join_form(text_value):
         region = raw_lines[2].strip()
         experience = raw_lines[6].strip() if len(raw_lines) >= 7 else ""
         nickname = raw_lines[-1].strip()
+        previous_nickname = ""
 
     if not age or not gender_text or not region:
         return None
@@ -9771,6 +9773,7 @@ def parse_code666_join_form(text_value):
         "gender": gender,
         "region": region,
         "nickname": nickname,
+        "previous_nickname": previous_nickname,
         "is_nomicl": is_nomicl,
     }
 
@@ -10074,8 +10077,9 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
     parsed = apply_current_user_micl_markers(parsed, profile_name)
     join_date = code666_join_date_text()
     is_update_room = is_genealogy_update_room(source_id)
+    identity_name = parsed.get("previous_nickname") or profile_name
     profile_user_id = (
-        code666_auto_profile_user_id(profile_name, parsed["age"], parsed["region"])
+        code666_auto_profile_user_id(identity_name, parsed["age"], parsed["region"])
         if is_update_room
         else user_id
     )
@@ -10146,6 +10150,8 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
         now_str(),
         now_str(),
     ))
+    if is_update_room:
+        cleanup_code666_join_form_profiles(cur)
     conn.commit()
     conn.close()
 
@@ -10157,6 +10163,116 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
         f"지역: {parsed['region']}"
         + (f"\n메모: {join_note}" if join_note else "")
     )
+
+
+def cleanup_code666_join_form_profiles(cur=None):
+    close_conn = False
+    conn = None
+    cleaned = 0
+    try:
+        if cur is None:
+            conn = db()
+            cur = conn.cursor()
+            close_conn = True
+
+        cur.execute("""
+        SELECT rowid, *
+        FROM genealogy_profiles
+        WHERE COALESCE(form_text, '') != ''
+        """)
+        rows = [dict(row) for row in cur.fetchall()]
+
+        groups = {}
+        for row in rows:
+            parsed = parse_code666_join_form(row.get("form_text"))
+            if not parsed or not parsed.get("nickname"):
+                continue
+            identity_name = parsed.get("previous_nickname") or parsed.get("nickname")
+            target_user_id = code666_auto_profile_user_id(identity_name, parsed["age"], parsed["region"])
+            groups.setdefault(target_user_id, []).append((row, parsed))
+
+        for target_user_id, items in groups.items():
+            if not items:
+                continue
+
+            latest_row, latest_parsed = max(
+                items,
+                key=lambda item: (
+                    str(item[0].get("updated_at") or ""),
+                    str(item[0].get("created_at") or ""),
+                    int(item[0].get("rowid") or 0),
+                ),
+            )
+
+            cur.execute("SELECT rowid FROM genealogy_profiles WHERE user_id = ?", (target_user_id,))
+            target = cur.fetchone()
+            target_rowid = int(target["rowid"]) if target else None
+
+            update_values = (
+                latest_parsed["nickname"],
+                latest_parsed["gender"],
+                latest_parsed["is_nomicl"],
+                latest_parsed["age"],
+                latest_parsed["region"],
+                latest_parsed["nickname"],
+                latest_row.get("source_id") or "",
+                latest_row.get("form_text") or "",
+                latest_row.get("updated_at") or now_str(),
+            )
+
+            if target_rowid:
+                cur.execute("""
+                UPDATE genealogy_profiles
+                SET user_name = ?,
+                    gender = ?,
+                    is_nomicl = ?,
+                    profile_age = ?,
+                    profile_region = ?,
+                    profile_nickname = ?,
+                    source_id = ?,
+                    form_text = ?,
+                    updated_at = ?
+                WHERE rowid = ?
+                """, (*update_values, target_rowid))
+            else:
+                target_rowid = int(latest_row["rowid"])
+                cur.execute("""
+                UPDATE genealogy_profiles
+                SET user_id = ?,
+                    user_name = ?,
+                    gender = ?,
+                    is_nomicl = ?,
+                    profile_age = ?,
+                    profile_region = ?,
+                    profile_nickname = ?,
+                    source_id = ?,
+                    form_text = ?,
+                    updated_at = ?
+                WHERE rowid = ?
+                """, (target_user_id, *update_values, target_rowid))
+
+            duplicate_rowids = [
+                int(row["rowid"])
+                for row, _ in items
+                if int(row["rowid"]) != target_rowid
+            ]
+            for rowid in duplicate_rowids:
+                cur.execute("DELETE FROM genealogy_profiles WHERE rowid = ?", (rowid,))
+
+            if len(items) > 1 or latest_row.get("user_id") != target_user_id or latest_row.get("profile_nickname") != latest_parsed["nickname"]:
+                cleaned += max(1, len(items) - 1)
+
+        if close_conn:
+            conn.commit()
+        return cleaned
+    except Exception as e:
+        log_error("CODE666_JOIN_FORM_PROFILE_CLEANUP_ERROR", e)
+        if close_conn and conn:
+            conn.rollback()
+        return cleaned
+    finally:
+        if close_conn and conn:
+            conn.close()
 
 
 def manual_genealogy_member_keys(content):
@@ -10516,6 +10632,7 @@ def sync_genealogy_profiles_from_users():
         upsert_genealogy_profile_from_manual(cur, user, parsed)
         manual_synced += 1
 
+    form_cleanup = cleanup_code666_join_form_profiles(cur)
     marker_sync = sync_current_user_micl_markers_to_genealogy(cur)
 
     conn.commit()
@@ -10527,6 +10644,7 @@ def sync_genealogy_profiles_from_users():
         "manual_missing": manual_missing,
         "manual_ambiguous": manual_ambiguous,
         "skipped_manual": skipped_manual,
+        "form_cleanup": form_cleanup,
         "marker_sync": marker_sync,
     }
 
@@ -10762,6 +10880,7 @@ def code666_birth_sort_key(row):
 
 
 def code666_member_list_text():
+    cleanup_code666_join_form_profiles()
     sync_current_user_micl_markers_to_genealogy()
 
     manual_role_map = manual_genealogy_role_map(get_genealogy_content())
@@ -11852,6 +11971,7 @@ def handle(event):
             f"문답 프로필 동기화: {result['profile_synced']}명\n"
             f"수동족보 동기화: {result['manual_synced']}명 / {result['manual_total']}명\n"
             f"수동 우선 유지: {result['skipped_manual']}명\n"
+            f"오기입/중복 정리: {result['form_cleanup']}건\n"
             f"전체유저 미매칭: {len(result['manual_missing'])}명\n"
             f"중복 후보: {len(result['manual_ambiguous'])}명\n\n"
             "확인: /족보인원체크\n"
