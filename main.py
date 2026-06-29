@@ -9719,7 +9719,10 @@ def parse_code666_join_form(text_value):
         age = fields.get("나이", "").strip()
         gender_text = fields.get("성별", "").strip()
         region = fields.get("지역", "").strip()
-        nickname = fields.get("전에쓰던닉네임", "").strip()
+        nickname = (
+            fields.get("사용할닉네임", "").strip()
+            or fields.get("전에쓰던닉네임", "").strip()
+        )
         experience = fields.get("야방경험유무", "").strip()
     else:
         if len(raw_lines) < 4:
