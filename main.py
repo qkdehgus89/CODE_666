@@ -10284,6 +10284,85 @@ def cleanup_code666_join_form_profiles(cur=None):
             conn.close()
 
 
+def code666_is_blank_region(region):
+    return str(region or "").strip() in ("", "-")
+
+
+def cleanup_code666_blank_region_duplicates(cur=None):
+    close_conn = False
+    conn = None
+    cleaned = 0
+    try:
+        if cur is None:
+            conn = db()
+            cur = conn.cursor()
+            close_conn = True
+
+        cur.execute("""
+        SELECT rowid, *
+        FROM genealogy_profiles
+        """)
+        rows = [dict(row) for row in cur.fetchall()]
+
+        groups = {}
+        for row in rows:
+            name, birth, region = code666_member_display_parts(row)
+            key = "|".join([
+                clean_keyword(strip_coin_suffix(name)),
+                normalize_code666_birth_year(strip_coin_suffix(birth)),
+            ])
+            if not key.strip("|"):
+                continue
+            groups.setdefault(key, []).append((row, region))
+
+        for items in groups.values():
+            if len(items) < 2:
+                continue
+
+            rows_with_region = [
+                (row, region)
+                for row, region in items
+                if not code666_is_blank_region(region)
+            ]
+            if not rows_with_region:
+                continue
+
+            preferred_row, preferred_region = max(
+                rows_with_region,
+                key=lambda item: (
+                    1 if str(item[0].get("form_text") or "").strip() else 0,
+                    str(item[0].get("updated_at") or ""),
+                    int(item[0].get("rowid") or 0),
+                ),
+            )
+
+            for row, region in items:
+                if int(row["rowid"]) == int(preferred_row["rowid"]):
+                    continue
+                if not code666_is_blank_region(region):
+                    continue
+                cur.execute("DELETE FROM genealogy_profiles WHERE rowid = ?", (int(row["rowid"]),))
+                cleaned += 1
+
+            if code666_is_blank_region(preferred_row.get("profile_region")):
+                cur.execute(
+                    "UPDATE genealogy_profiles SET profile_region = ?, updated_at = ? WHERE rowid = ?",
+                    (preferred_region, now_str(), int(preferred_row["rowid"])),
+                )
+
+        if close_conn:
+            conn.commit()
+        return cleaned
+    except Exception as e:
+        log_error("CODE666_BLANK_REGION_DUPLICATE_CLEANUP_ERROR", e)
+        if close_conn and conn:
+            conn.rollback()
+        return cleaned
+    finally:
+        if close_conn and conn:
+            conn.close()
+
+
 def manual_genealogy_member_keys(content):
     keys = set()
     for line in normalize_genealogy_content(content).split("\n"):
@@ -10642,6 +10721,7 @@ def sync_genealogy_profiles_from_users():
         manual_synced += 1
 
     form_cleanup = cleanup_code666_join_form_profiles(cur)
+    blank_region_cleanup = cleanup_code666_blank_region_duplicates(cur)
     marker_sync = sync_current_user_micl_markers_to_genealogy(cur)
 
     conn.commit()
@@ -10654,6 +10734,7 @@ def sync_genealogy_profiles_from_users():
         "manual_ambiguous": manual_ambiguous,
         "skipped_manual": skipped_manual,
         "form_cleanup": form_cleanup,
+        "blank_region_cleanup": blank_region_cleanup,
         "marker_sync": marker_sync,
     }
 
@@ -10863,17 +10944,35 @@ def code666_member_dedupe_key(row):
     return clean_keyword(row_value(row, "user_name") or row_value(row, "profile_nickname") or "")
 
 
+def code666_member_completeness_score(row):
+    name, birth, region = code666_member_display_parts(row)
+    score = 0
+    if str(name or "").strip() and str(name or "").strip() != "-":
+        score += 1
+    if str(birth or "").strip() and str(birth or "").strip() != "-":
+        score += 1
+    if not code666_is_blank_region(region):
+        score += 5
+    if str(row_value(row, "profile_join_note") or "").strip():
+        score += 2
+    if str(row_value(row, "profile_join_date") or "").strip():
+        score += 1
+    if str(row_value(row, "form_text") or "").strip():
+        score += 1
+    return score
+
+
 def dedupe_code666_rows(rows):
-    seen = set()
-    unique_rows = []
+    by_key = {}
     for row in rows:
         key = code666_member_dedupe_key(row)
-        if key and key in seen:
+        if not key:
+            by_key[f"row:{len(by_key)}"] = row
             continue
-        if key:
-            seen.add(key)
-        unique_rows.append(row)
-    return unique_rows
+        current = by_key.get(key)
+        if current is None or code666_member_completeness_score(row) > code666_member_completeness_score(current):
+            by_key[key] = row
+    return list(by_key.values())
 
 
 def code666_birth_sort_key(row):
@@ -10890,6 +10989,7 @@ def code666_birth_sort_key(row):
 
 def code666_member_list_text():
     cleanup_code666_join_form_profiles()
+    cleanup_code666_blank_region_duplicates()
     sync_current_user_micl_markers_to_genealogy()
 
     manual_role_map = manual_genealogy_role_map(get_genealogy_content())
@@ -11981,6 +12081,7 @@ def handle(event):
             f"수동족보 동기화: {result['manual_synced']}명 / {result['manual_total']}명\n"
             f"수동 우선 유지: {result['skipped_manual']}명\n"
             f"오기입/중복 정리: {result['form_cleanup']}건\n"
+            f"빈 지역 중복 정리: {result['blank_region_cleanup']}건\n"
             f"전체유저 미매칭: {len(result['manual_missing'])}명\n"
             f"중복 후보: {len(result['manual_ambiguous'])}명\n\n"
             "확인: /족보인원체크\n"
