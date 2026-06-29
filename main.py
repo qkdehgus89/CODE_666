@@ -2377,8 +2377,32 @@ def row_value(row, key, default=None):
         return default
 
 
+def code666_marker_name_parts(user_name):
+    text_value = str(user_name or "").strip()
+    if not text_value:
+        return "", ""
+
+    marker_pattern = f"[{MICL_MALE_MARK}{MICL_FEMALE_MARK}{NOMICL_MALE_MARK}{NOMICL_FEMALE_MARK}]"
+    match = re.search(
+        marker_pattern + r"\s*(\d{2})?\s*([\uac00-\ud7a3A-Za-z]{2,})",
+        text_value,
+    )
+    if not match:
+        return "", ""
+
+    birth = match.group(1) or ""
+    name = match.group(2) or ""
+    return name.strip(), normalize_code666_birth_year(birth)
+
+
 def gender_name_keys(user_name):
     keys = set()
+    marker_name, marker_birth = code666_marker_name_parts(user_name)
+    if marker_name:
+        keys.add(marker_name)
+        if marker_birth:
+            keys.add(f"{marker_birth}{marker_name}")
+
     for value in [
         clean_keyword(user_name),
         normalize_mention_name(user_name),
@@ -9785,16 +9809,13 @@ def code666_auto_profile_user_id(profile_name, birth_year, region):
 
 def apply_current_user_micl_markers(parsed, profile_name):
     try:
-        rows = find_users(profile_name, limit=5)
-        if not rows:
-            return parsed
-        best = rows[0]
-        marker = micl_status_from_name_markers(best.get("user_name"))
-        if not marker:
+        marker_info = current_user_marker_info(profile_name)
+        if not marker_info:
             return parsed
 
         parsed = dict(parsed)
-        marker_gender = gender_from_text_markers(best.get("user_name"))
+        marker = marker_info.get("marker")
+        marker_gender = marker_info.get("gender")
         if marker_gender:
             parsed["gender"] = marker_gender
         if marker == "micl":
@@ -9807,6 +9828,211 @@ def apply_current_user_micl_markers(parsed, profile_name):
     except Exception as e:
         log_error("CODE666_MICL_MARKER_APPLY_ERROR", e)
         return parsed
+
+
+def current_user_marker_info(profile_name):
+    try:
+        target_keys = gender_name_keys(profile_name)
+        rows = find_users(profile_name, limit=5)
+        for row in rows:
+            user_name = str(row.get("user_name") or "")
+            marker = micl_status_from_name_markers(user_name)
+            if not marker:
+                continue
+            return {
+                "marker": marker,
+                "gender": gender_from_text_markers(user_name),
+                "user_name": user_name,
+                "user_id": row.get("user_id"),
+            }
+
+        conn = db()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT user_id, user_name
+        FROM users
+        WHERE COALESCE(is_active, 1) = 1
+          AND user_name IS NOT NULL
+          AND (
+            user_name LIKE '%' || ? || '%'
+            OR user_name LIKE '%' || ? || '%'
+            OR user_name LIKE '%' || ? || '%'
+            OR user_name LIKE '%' || ? || '%'
+          )
+        """, (MICL_MALE_MARK, MICL_FEMALE_MARK, NOMICL_MALE_MARK, NOMICL_FEMALE_MARK))
+        try:
+            for row in cur.fetchall():
+                user_name = str(row["user_name"] or "")
+                if not (target_keys & gender_name_keys(user_name)):
+                    continue
+                marker = micl_status_from_name_markers(user_name)
+                if not marker:
+                    continue
+                return {
+                    "marker": marker,
+                    "gender": gender_from_text_markers(user_name),
+                    "user_name": user_name,
+                    "user_id": row["user_id"],
+                }
+        finally:
+            conn.close()
+    except Exception as e:
+        log_error("CODE666_CURRENT_MARKER_LOOKUP_ERROR", e)
+    return None
+
+
+def apply_current_user_marker_to_profile_row(row):
+    try:
+        profile_name = (
+            row_value(row, "profile_nickname")
+            or display_nickname(row_value(row, "user_name"))
+            or row_value(row, "user_name")
+        )
+        marker_info = current_user_marker_info(profile_name)
+        if not marker_info:
+            return dict(row) if not isinstance(row, dict) else dict(row)
+
+        data = dict(row) if not isinstance(row, dict) else dict(row)
+        data["user_name"] = marker_info.get("user_name") or data.get("user_name")
+        if marker_info.get("gender"):
+            data["gender"] = marker_info["gender"]
+        if marker_info.get("marker") == "micl":
+            data["is_nomicl"] = 0
+        elif marker_info.get("marker") == "nomicl":
+            data["is_nomicl"] = 1
+            if not data.get("gender"):
+                data["gender"] = "male"
+        return data
+    except Exception as e:
+        log_error("CODE666_PROFILE_MARKER_APPLY_ERROR", e)
+        return dict(row) if not isinstance(row, dict) else row
+
+
+def sync_current_user_micl_markers_to_genealogy(cur=None):
+    close_conn = False
+    conn = None
+    changed = 0
+    inserted = 0
+    matched = 0
+    try:
+        if cur is None:
+            conn = db()
+            cur = conn.cursor()
+            close_conn = True
+
+        cur.execute("""
+        SELECT user_id, user_name, gender, is_nomicl,
+               profile_age, profile_region, profile_join_note, profile_join_date,
+               profile_nickname, last_seen_source_id, profile_updated_at, updated_at
+        FROM users
+        WHERE COALESCE(is_active, 1) = 1
+          AND user_name IS NOT NULL
+          AND (
+            user_name LIKE '%' || ? || '%'
+            OR user_name LIKE '%' || ? || '%'
+            OR user_name LIKE '%' || ? || '%'
+            OR user_name LIKE '%' || ? || '%'
+          )
+        """, (MICL_MALE_MARK, MICL_FEMALE_MARK, NOMICL_MALE_MARK, NOMICL_FEMALE_MARK))
+        users = [dict(row) for row in cur.fetchall()]
+
+        cur.execute("""
+        SELECT user_id, user_name, profile_nickname
+        FROM genealogy_profiles
+        """)
+        profiles = [dict(row) for row in cur.fetchall()]
+
+        profile_map = {}
+        for profile in profiles:
+            keys = {profile.get("user_id")}
+            for value in [profile.get("user_name"), profile.get("profile_nickname")]:
+                keys |= gender_name_keys(value)
+            for key in {str(item or "").strip() for item in keys if item}:
+                profile_map.setdefault(key, []).append(profile)
+
+        now_value = now_str()
+        for user in users:
+            marker = micl_status_from_name_markers(user["user_name"])
+            if not marker:
+                continue
+
+            marker_gender = gender_from_text_markers(user["user_name"]) or gender_from_user_row(user)
+            is_nomicl = 0 if marker == "micl" else 1
+            if marker == "nomicl" and not marker_gender:
+                marker_gender = "male"
+
+            user_keys = {user["user_id"]}
+            user_keys |= gender_name_keys(user["user_name"])
+            user_keys |= gender_name_keys(user.get("profile_nickname"))
+
+            targets = {}
+            for key in {str(item or "").strip() for item in user_keys if item}:
+                for profile in profile_map.get(key, []):
+                    targets[profile["user_id"]] = profile
+
+            if targets:
+                matched += len(targets)
+                for profile_id in targets:
+                    cur.execute("""
+                    UPDATE genealogy_profiles
+                    SET user_name = ?,
+                        gender = ?,
+                        is_nomicl = ?,
+                        updated_at = ?
+                    WHERE user_id = ?
+                    """, (
+                        user["user_name"],
+                        marker_gender or user.get("gender") or "unknown",
+                        is_nomicl,
+                        now_value,
+                        profile_id,
+                    ))
+                    changed += cur.rowcount
+                continue
+
+            fake_row = {
+                "user_name": user["user_name"],
+                "profile_nickname": user.get("profile_nickname"),
+                "profile_age": user.get("profile_age"),
+                "profile_region": user.get("profile_region"),
+            }
+            profile_name, birth, _ = code666_member_display_parts(fake_row)
+            cur.execute("""
+            INSERT INTO genealogy_profiles (
+                user_id, user_name, gender, is_nomicl,
+                profile_age, profile_region, profile_join_note, profile_join_date,
+                profile_nickname, profile_role, source_id, form_text, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                user["user_id"],
+                user["user_name"],
+                marker_gender or user.get("gender") or "unknown",
+                is_nomicl,
+                normalize_code666_birth_year(user.get("profile_age") or birth),
+                user.get("profile_region") or "",
+                user.get("profile_join_note") or "",
+                user.get("profile_join_date") or "",
+                user.get("profile_nickname") or profile_name,
+                "",
+                user.get("last_seen_source_id") or "",
+                "",
+                now_value,
+                now_value,
+            ))
+            inserted += 1
+
+        if close_conn:
+            conn.commit()
+        return {"changed": changed, "inserted": inserted, "matched": matched}
+    except Exception as e:
+        log_error("CODE666_SYNC_CURRENT_MICL_MARKERS_ERROR", e)
+        if close_conn and conn:
+            conn.rollback()
+        return {"changed": changed, "inserted": inserted, "matched": matched, "error": str(e)}
+    finally:
+        if close_conn and conn:
+            conn.close()
 
 
 def save_code666_join_profile(user_id, user_name, source_id, text_value):
@@ -10268,6 +10494,8 @@ def sync_genealogy_profiles_from_users():
         upsert_genealogy_profile_from_manual(cur, user, parsed)
         manual_synced += 1
 
+    marker_sync = sync_current_user_micl_markers_to_genealogy(cur)
+
     conn.commit()
     conn.close()
     return {
@@ -10277,6 +10505,7 @@ def sync_genealogy_profiles_from_users():
         "manual_missing": manual_missing,
         "manual_ambiguous": manual_ambiguous,
         "skipped_manual": skipped_manual,
+        "marker_sync": marker_sync,
     }
 
 
@@ -10355,6 +10584,10 @@ def code666_member_display_parts(row):
     user_name = row["user_name"]
     raw_name = str(user_name or "").strip()
     birth = "-"
+
+    marker_name, marker_birth = code666_marker_name_parts(raw_name)
+    if marker_name:
+        return marker_name, marker_birth or "-", "-"
 
     match = re.search(r"(\d{2})([0-9A-Za-z가-힣]+)", remove_nickname_bracket_text(raw_name))
     if match:
@@ -10482,6 +10715,8 @@ def code666_birth_sort_key(row):
 
 
 def code666_member_list_text():
+    sync_current_user_micl_markers_to_genealogy()
+
     manual_role_map = manual_genealogy_role_map(get_genealogy_content())
     blocked_keys = inactive_or_deleted_user_keys()
     conn = db()
@@ -10543,6 +10778,7 @@ def code666_member_list_text():
     }
 
     for row in rows:
+        row = apply_current_user_marker_to_profile_row(row)
         if is_inactive_or_deleted_member(row, blocked_keys):
             continue
         role = code666_member_row_role(row, manual_role_map)
