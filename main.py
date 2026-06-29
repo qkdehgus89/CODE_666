@@ -1131,6 +1131,15 @@ def init_db():
             "INSERT INTO system_flags (key, value) VALUES ('currency_scaled_v1', 'done')"
         )
 
+    cur.execute("SELECT value FROM system_flags WHERE key = 'currency_zero_reset_20260629_v1'")
+    currency_zero_reset_done = cur.fetchone()
+    if not currency_zero_reset_done:
+        cur.execute("UPDATE currency SET balance = 0")
+        cur.execute(
+            "INSERT INTO system_flags (key, value) VALUES ('currency_zero_reset_20260629_v1', ?)",
+            (now_str(),)
+        )
+
     cur.execute("SELECT value FROM system_flags WHERE key = 'revival_balance_limit_reset_v1'")
     revival_reset_done = cur.fetchone()
     if not revival_reset_done:
