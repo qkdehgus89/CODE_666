@@ -9721,15 +9721,25 @@ def parse_code666_join_form(text_value):
         if key:
             fields[key] = value
 
+    def field_value(*keys):
+        for key in keys:
+            key = clean_keyword(key)
+            if key in fields and str(fields[key]).strip():
+                return str(fields[key]).strip()
+            for saved_key, saved_value in fields.items():
+                if str(saved_key).startswith(key) and str(saved_value).strip():
+                    return str(saved_value).strip()
+        return ""
+
     if fields:
-        age = fields.get("나이", "").strip()
-        gender_text = fields.get("성별", "").strip()
-        region = fields.get("지역", "").strip()
+        age = field_value("나이")
+        gender_text = field_value("성별")
+        region = field_value("지역")
         nickname = (
-            fields.get("사용할닉네임", "").strip()
-            or fields.get("전에쓰던닉네임", "").strip()
+            field_value("사용할닉네임")
+            or field_value("전에쓰던닉네임")
         )
-        experience = fields.get("야방경험유무", "").strip()
+        experience = field_value("야방경험유무")
     else:
         if len(raw_lines) < 4:
             return None
