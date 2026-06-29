@@ -9285,6 +9285,9 @@ def strip_coin_suffix(line):
     """
     value = str(line)
 
+    # 붙여넣기 과정에서 들어간 Markdown 코드 표시를 제거합니다.
+    value = value.replace("`", "")
+
     # 💰21.8 / 💰 21.8 / 💰21.8코인 / 💰 21.8 코인 전부 제거
     value = re.sub(r"\s*💰\s*[-+]?\d+(?:\.\d+)?\s*(?:코인)?", "", value)
 
@@ -10250,10 +10253,10 @@ def parse_manual_genealogy_line(line, section):
     if len(parts) < 3:
         return None
 
-    name = parts[0].strip()
-    age = parts[1].strip()
-    region = parts[2].strip()
-    join_note = parts[3].strip() if len(parts) >= 4 else ""
+    name = strip_coin_suffix(parts[0]).strip()
+    age = strip_coin_suffix(parts[1]).strip()
+    region = strip_coin_suffix(parts[2]).strip()
+    join_note = strip_coin_suffix(parts[3]).strip() if len(parts) >= 4 else ""
     join_date = comment.strip() if comment else ""
 
     if not join_date and join_note:
@@ -10691,15 +10694,40 @@ def code666_member_gender_group(row):
 
 def code666_member_line(row):
     name, birth, region = code666_member_display_parts(row)
-    parts = [name, birth, region]
-    join_note = str(row_value(row, "profile_join_note") or "").strip()
-    join_date = str(row_value(row, "profile_join_date") or "").strip()
+    parts = [strip_coin_suffix(name).strip(), strip_coin_suffix(birth).strip(), strip_coin_suffix(region).strip()]
+    join_note = strip_coin_suffix(row_value(row, "profile_join_note") or "").strip()
+    join_date = strip_coin_suffix(row_value(row, "profile_join_date") or "").strip()
     if join_note:
         parts.append(join_note)
     line = " • ".join(parts)
     if code666_member_gender_group(row) == "nomicl" and row_value(row, "gender") == "male" and join_date:
         line = f"{line} // {join_date}"
     return line
+
+
+def code666_member_dedupe_key(row):
+    name, birth, region = code666_member_display_parts(row)
+    key = "|".join([
+        clean_keyword(strip_coin_suffix(name)),
+        normalize_code666_birth_year(strip_coin_suffix(birth)),
+        clean_keyword(strip_coin_suffix(region)),
+    ])
+    if key.strip("|"):
+        return key
+    return clean_keyword(row_value(row, "user_name") or row_value(row, "profile_nickname") or "")
+
+
+def dedupe_code666_rows(rows):
+    seen = set()
+    unique_rows = []
+    for row in rows:
+        key = code666_member_dedupe_key(row)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        unique_rows.append(row)
+    return unique_rows
 
 
 def code666_birth_sort_key(row):
@@ -10785,6 +10813,9 @@ def code666_member_list_text():
         if role:
             groups[role].append(row)
         groups[code666_member_gender_group(row)].append(row)
+
+    for key in list(groups.keys()):
+        groups[key] = dedupe_code666_rows(groups[key])
 
     def add_section(title, section_rows):
         lines.extend(["", title, ""])
