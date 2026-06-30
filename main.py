@@ -412,6 +412,24 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS dice_duels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        challenger_user_id TEXT NOT NULL,
+        challenger_user_name TEXT NOT NULL,
+        target_user_id TEXT NOT NULL,
+        target_user_name TEXT NOT NULL,
+        challenger_roll INTEGER,
+        target_roll INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS micl_referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         relation_type TEXT NOT NULL,
@@ -1780,9 +1798,12 @@ def beginner_guide_text():
 사용 가능한 일반 명령어
 /출석
 /주사위
+/주사위듀얼 닉네임
+/거절
 /눈치게임
 /포춘쿠키
 /코드쿠키
+/코드메이트
 
 간단 자동답변
 /ㅁㄴ, ㅁㄴ - 매너봉
@@ -2182,6 +2203,264 @@ def code_cookie_text(date_str, user_id, user_name):
         "🍪 코드쿠키\n\n"
         f"{display_nickname(user_name)}님의 CODE 운세\n"
         f"{cookie}"
+    )
+
+
+CODE_MATE_LINES = [
+    "오늘은 가볍게 선톡각. 너무 진지하지 않게 툭 던져봐요.",
+    "둘이 붙으면 텐션이 빨리 오를 조합이에요.",
+    "오늘은 장난 한마디가 분위기를 열어줄 수 있어요.",
+    "밀당보다 쿨한 리액션이 더 잘 먹히는 날이에요.",
+    "서로 말투가 묘하게 잘 맞을 수 있어요.",
+    "오늘은 눈치 보지 말고 가볍게 태그해도 괜찮아요.",
+    "둘 사이엔 드립으로 시작해서 갠라로 빠질 가능성이 있어요.",
+    "과한 플러팅 말고 은근한 한마디가 포인트예요.",
+    "오늘 케미는 빠르게 치고 빠지는 쪽이 좋아요.",
+    "둘 다 웃기 시작하면 공창 분위기까지 살아날 조합이에요.",
+    "첫 멘트는 짧게, 리액션은 크게 가면 좋아요.",
+    "오늘은 괜히 한 번 더 말 걸고 싶어지는 조합이에요.",
+    "텐션이 맞으면 밤까지 대화가 길어질 수 있어요.",
+    "서로 장난 받아주는 속도가 잘 맞을 수 있어요.",
+    "오늘은 살짝 능청스러운 멘트가 잘 어울려요.",
+    "너무 안전하게 가지 말고 한 끗만 더 솔직해져 봐요.",
+    "둘 사이엔 티 안 나는 호감 신호가 포인트예요.",
+    "오늘은 먼저 웃겨주는 사람이 이기는 조합이에요.",
+    "공창에서 자연스럽게 받아치면 그림이 좋아요.",
+    "짧은 칭찬 하나가 생각보다 오래 남을 수 있어요.",
+    "오늘은 드립 반, 관심 반으로 가면 딱이에요.",
+    "둘이 대화하면 묘하게 주변이 조용히 구경할 조합이에요.",
+    "살짝 도발적인 농담이 분위기를 바꿀 수 있어요.",
+    "오늘은 애매하게 숨기기보다 귀엽게 티 내는 쪽이 좋아요.",
+    "대화 시작은 가볍게, 마무리는 은근하게 가요.",
+    "서로의 답장 템포가 맞으면 케미가 빨리 붙을 수 있어요.",
+    "오늘은 별말 아닌 한마디가 떡밥이 될 수 있어요.",
+    "둘이 붙으면 장난처럼 시작해서 진심처럼 남을 수 있어요.",
+    "너무 계산하지 말고 분위기 타는 쪽이 좋아요.",
+    "오늘의 키워드는 쿨하게, 근데 살짝 설레게예요.",
+]
+
+
+def code_mate_candidates(source_id, user_id):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT user_id, user_name, MAX(updated_at) AS updated_at
+    FROM users
+    WHERE COALESCE(is_active, 1) = 1
+      AND user_id != ?
+      AND COALESCE(user_name, '') != ''
+      AND COALESCE(last_seen_source_id, '') = ?
+    GROUP BY user_id
+    ORDER BY updated_at DESC
+    LIMIT 80
+    """, (user_id, source_id))
+    rows = [dict(row) for row in cur.fetchall()]
+
+    if not rows:
+        cur.execute("""
+        SELECT user_id, user_name, SUM(count) AS total_count
+        FROM counts
+        WHERE source_id = ?
+          AND user_id != ?
+          AND COALESCE(user_name, '') != ''
+        GROUP BY user_id
+        ORDER BY total_count DESC
+        LIMIT 80
+        """, (source_id, user_id))
+        rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def code_mate_text(source_id, user_id, user_name):
+    candidates = code_mate_candidates(source_id, user_id)
+    if not candidates:
+        return "💘 코드메이트\n\n아직 매칭할 사람이 부족해요."
+
+    mate = random.choice(candidates)
+    return (
+        "💘 오늘의 코드메이트\n\n"
+        f"{display_nickname(user_name)}님의 코드메이트는...\n"
+        f"{display_nickname(mate['user_name'])}님입니다.\n\n"
+        f"한마디 추천:\n{random.choice(CODE_MATE_LINES)}"
+    )
+
+
+def active_dice_duel_for_user(source_id, user_id):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT *
+    FROM dice_duels
+    WHERE source_id = ?
+      AND status IN ('pending', 'rolling')
+      AND (challenger_user_id = ? OR target_user_id = ?)
+    ORDER BY id DESC
+    LIMIT 1
+    """, (source_id, user_id, user_id))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_keyword):
+    if not target_keyword:
+        return "사용법: /주사위듀얼 닉네임"
+
+    target, err = resolve_active_user_by_nickname(
+        target_keyword,
+        exclude_user_id=challenger_user_id,
+        purpose="대결 상대",
+    )
+    if err:
+        return err
+
+    existing = active_dice_duel_for_user(source_id, challenger_user_id)
+    if existing:
+        return "🎲 진행 중인 주사위듀얼이 있어요.\n\n먼저 현재 대결을 마무리해 주세요."
+
+    existing = active_dice_duel_for_user(source_id, target["user_id"])
+    if existing:
+        return f"🎲 {display_nickname(target['user_name'])}님은 이미 진행 중인 주사위듀얼이 있어요."
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT INTO dice_duels (
+        date, source_id,
+        challenger_user_id, challenger_user_name,
+        target_user_id, target_user_name,
+        status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    """, (
+        today(),
+        source_id,
+        challenger_user_id,
+        challenger_user_name,
+        target["user_id"],
+        target["user_name"],
+        now_str(),
+        now_str(),
+    ))
+    conn.commit()
+    conn.close()
+
+    return (
+        "🎲 주사위듀얼 신청\n\n"
+        f"{display_nickname(challenger_user_name)}님 vs {display_nickname(target['user_name'])}님\n\n"
+        "두 사람이 각각 /주사위 를 굴려주세요.\n"
+        "낮은 숫자가 사진공개입니다.\n\n"
+        f"{display_nickname(target['user_name'])}님은 원하지 않으면 /거절 을 입력하면 됩니다."
+    )
+
+
+def reject_dice_duel(source_id, user_id, user_name):
+    duel = active_dice_duel_for_user(source_id, user_id)
+    if not duel:
+        return "거절할 주사위듀얼이 없어요."
+    if duel["target_user_id"] != user_id:
+        return "주사위듀얼은 지목받은 사람만 거절할 수 있어요."
+    if duel.get("target_roll") is not None or duel.get("challenger_roll") is not None:
+        return "이미 주사위를 굴린 대결은 거절할 수 없어요."
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    UPDATE dice_duels
+    SET status = 'rejected',
+        updated_at = ?,
+        completed_at = ?
+    WHERE id = ?
+    """, (now_str(), now_str(), duel["id"]))
+    conn.commit()
+    conn.close()
+
+    return (
+        "🎲 주사위듀얼 거절\n\n"
+        f"{display_nickname(user_name)}님이 대결을 거절했습니다."
+    )
+
+
+def roll_dice_for_duel_or_normal(source_id, user_id, user_name):
+    dice_value = random.randint(0, 100)
+    duel = active_dice_duel_for_user(source_id, user_id)
+    if not duel:
+        return (
+            "🎲 주사위 결과\n\n"
+            f"{display_nickname(user_name)}님: {dice_value}"
+        )
+
+    if user_id not in (duel["challenger_user_id"], duel["target_user_id"]):
+        return (
+            "🎲 주사위 결과\n\n"
+            f"{display_nickname(user_name)}님: {dice_value}"
+        )
+
+    roll_column = "challenger_roll" if user_id == duel["challenger_user_id"] else "target_roll"
+    if duel.get(roll_column) is not None:
+        return "🎲 이미 이번 주사위듀얼에서 굴렸어요.\n상대가 굴릴 때까지 기다려 주세요."
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute(f"""
+    UPDATE dice_duels
+    SET {roll_column} = ?,
+        status = 'rolling',
+        updated_at = ?
+    WHERE id = ?
+    """, (dice_value, now_str(), duel["id"]))
+    conn.commit()
+
+    cur.execute("SELECT * FROM dice_duels WHERE id = ?", (duel["id"],))
+    updated = dict(cur.fetchone())
+
+    if updated.get("challenger_roll") is None or updated.get("target_roll") is None:
+        conn.close()
+        return (
+            "🎲 주사위듀얼 진행 중\n\n"
+            f"{display_nickname(user_name)}님: {dice_value}\n\n"
+            "상대도 /주사위 를 굴려주세요."
+        )
+
+    challenger_roll = int(updated["challenger_roll"])
+    target_roll = int(updated["target_roll"])
+    if challenger_roll == target_roll:
+        cur.execute("""
+        UPDATE dice_duels
+        SET challenger_roll = NULL,
+            target_roll = NULL,
+            status = 'rolling',
+            updated_at = ?
+        WHERE id = ?
+        """, (now_str(), duel["id"]))
+        conn.commit()
+        conn.close()
+        return (
+            "🎲 주사위듀얼 무승부\n\n"
+            f"{display_nickname(updated['challenger_user_name'])}님: {challenger_roll}\n"
+            f"{display_nickname(updated['target_user_name'])}님: {target_roll}\n\n"
+            "동점이라 다시 굴립니다. 두 사람 모두 /주사위!"
+        )
+
+    loser_name = updated["challenger_user_name"] if challenger_roll < target_roll else updated["target_user_name"]
+    winner_name = updated["target_user_name"] if challenger_roll < target_roll else updated["challenger_user_name"]
+
+    cur.execute("""
+    UPDATE dice_duels
+    SET status = 'completed',
+        updated_at = ?,
+        completed_at = ?
+    WHERE id = ?
+    """, (now_str(), now_str(), duel["id"]))
+    conn.commit()
+    conn.close()
+
+    return (
+        "🎲 주사위듀얼 결과\n\n"
+        f"{display_nickname(updated['challenger_user_name'])}님: {challenger_roll}\n"
+        f"{display_nickname(updated['target_user_name'])}님: {target_roll}\n\n"
+        f"승자: {display_nickname(winner_name)}님\n"
+        f"사진공개 대상: {display_nickname(loser_name)}님"
     )
 
 
@@ -12944,8 +13223,13 @@ def handle(event):
     # =========================
     # 유저 명령어
     # =========================
-    enabled_user_commands = {"/출석", "/주사위", "/눈치게임", "/포춘쿠키", "/코드쿠키", "/명령어", "/가이드"}
-    if text.startswith("/") and text not in enabled_user_commands:
+    enabled_user_commands = {
+        "/출석", "/주사위", "/주사위듀얼", "/거절",
+        "/눈치게임", "/포춘쿠키", "/코드쿠키", "/코드메이트",
+        "/명령어", "/가이드",
+    }
+    enabled_user_prefixes = ("/주사위듀얼 ",)
+    if text.startswith("/") and text not in enabled_user_commands and not any(text.startswith(prefix) for prefix in enabled_user_prefixes):
         return
 
     if text == "/명령어":
@@ -12960,12 +13244,23 @@ def handle(event):
         return
 
     if text == "/주사위":
-        dice_value = random.randint(0, 100)
-        reply(
-            event.reply_token,
-            "🎲 주사위 결과\n\n"
-            f"{display_nickname(user_name)}님: {dice_value}"
-        )
+        reply(event.reply_token, roll_dice_for_duel_or_normal(source_id, user_id, user_name))
+        return
+
+    if text == "/주사위듀얼" or text.startswith("/주사위듀얼 "):
+        if is_private_chat(event):
+            reply(event.reply_token, "🎲 주사위듀얼은 같은 방에서만 진행할 수 있어요.\n공창에서 /주사위듀얼 닉네임 으로 신청해 주세요.")
+            return
+        target_keyword = text.replace("/주사위듀얼", "", 1).strip()
+        reply_many(event.reply_token, split_text_messages(start_dice_duel(source_id, user_id, user_name, target_keyword)))
+        return
+
+    if text == "/거절":
+        reply(event.reply_token, reject_dice_duel(source_id, user_id, user_name))
+        return
+
+    if text == "/코드메이트":
+        reply(event.reply_token, code_mate_text(source_id, user_id, user_name))
         return
 
     if text == "/눈치게임":
