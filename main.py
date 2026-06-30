@@ -2273,7 +2273,17 @@ def code_mate_candidates(source_id, user_id):
     conn = db()
     cur = conn.cursor()
     cur.execute("""
-    SELECT user_id, user_name, MAX(updated_at) AS updated_at
+    SELECT user_id, user_name, gender, is_nomicl
+    FROM users
+    WHERE user_id = ?
+    ORDER BY updated_at DESC
+    LIMIT 1
+    """, (user_id,))
+    sender = cur.fetchone()
+    sender = dict(sender) if sender else None
+
+    cur.execute("""
+    SELECT user_id, user_name, gender, is_nomicl, MAX(updated_at) AS updated_at
     FROM users
     WHERE COALESCE(is_active, 1) = 1
       AND user_id != ?
@@ -2287,18 +2297,39 @@ def code_mate_candidates(source_id, user_id):
 
     if not rows:
         cur.execute("""
-        SELECT user_id, user_name, SUM(count) AS total_count
-        FROM counts
-        WHERE source_id = ?
-          AND user_id != ?
-          AND COALESCE(user_name, '') != ''
-        GROUP BY user_id
+        SELECT
+            c.user_id,
+            COALESCE(u.user_name, c.user_name) AS user_name,
+            u.gender,
+            u.is_nomicl,
+            SUM(c.count) AS total_count
+        FROM counts c
+        LEFT JOIN users u
+          ON u.user_id = c.user_id
+        LEFT JOIN deleted_users d
+          ON d.original_user_id = c.user_id
+        WHERE c.source_id = ?
+          AND c.user_id != ?
+          AND COALESCE(COALESCE(u.user_name, c.user_name), '') != ''
+          AND COALESCE(u.is_active, 1) = 1
+          AND d.original_user_id IS NULL
+        GROUP BY c.user_id
         ORDER BY total_count DESC
         LIMIT 80
         """, (source_id, user_id))
         rows = [dict(row) for row in cur.fetchall()]
     conn.close()
-    return rows
+
+    sender_gender = effective_user_gender(sender, sender.get("user_name") if sender else None)
+    if sender_gender not in ("male", "female"):
+        return []
+
+    filtered = []
+    for row in rows:
+        target_gender = effective_user_gender(row, row.get("user_name"))
+        if target_gender and target_gender != sender_gender:
+            filtered.append(row)
+    return filtered
 
 
 def code_mate_text(source_id, user_id, user_name):
