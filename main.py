@@ -136,6 +136,7 @@ def is_operator_command(text):
         "/운영명령어", "/전체명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
         "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/족보삭제", "/족보수정", "/족보분류",
+        "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절", "/코드메이트",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -152,6 +153,7 @@ def is_operator_command(text):
         "/유저검색 ", "/유저상세 ", "/닉삭제", "/닉삭제번호",
         "/동반 ", "/초대 ", "/여초 ",
         "/족보삭제 ", "/족보수정 ", "/족보분류 ",
+        "/하이듀얼 ", "/로우듀얼 ",
         "/지급 ", "/차감 ", "/코인내역 ", "/삭제복구",
         "/구매 ", "/가챠 ",
         "/회생초기화 ",
@@ -191,6 +193,12 @@ def is_enabled_operator_command(text):
         "/삭제유저",
         "/마디수",
         "/전체마디수",
+        "/주사위",
+        "/주사위듀얼",
+        "/하이듀얼",
+        "/로우듀얼",
+        "/거절",
+        "/코드메이트",
     }
     prefix_commands = [
         "/유저검색 ",
@@ -206,6 +214,9 @@ def is_enabled_operator_command(text):
         "/삭제복구",
         "/마디수 ",
         "/전체마디수 ",
+        "/주사위듀얼 ",
+        "/하이듀얼 ",
+        "/로우듀얼 ",
     ]
     return text in exact_commands or any(text.startswith(prefix) for prefix in prefix_commands)
 
@@ -246,6 +257,17 @@ def is_economy_command(text):
 
 def is_shop_view_test_command(text, source_id):
     return text == "/상점" and is_operator_room(source_id)
+
+
+def is_unreleased_play_command(text):
+    if not text:
+        return False
+    return (
+        text in {"/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절", "/코드메이트"}
+        or text.startswith("/주사위듀얼 ")
+        or text.startswith("/하이듀얼 ")
+        or text.startswith("/로우듀얼 ")
+    )
 
 
 def count_source_ids():
@@ -420,6 +442,7 @@ def init_db():
         challenger_user_name TEXT NOT NULL,
         target_user_id TEXT NOT NULL,
         target_user_name TEXT NOT NULL,
+        duel_type TEXT NOT NULL DEFAULT 'high',
         challenger_roll INTEGER,
         target_roll INTEGER,
         status TEXT NOT NULL DEFAULT 'pending',
@@ -1038,6 +1061,11 @@ def init_db():
     genealogy_profile_cols = {row["name"] for row in cur.fetchall()}
     if "profile_role" not in genealogy_profile_cols:
         cur.execute("ALTER TABLE genealogy_profiles ADD COLUMN profile_role TEXT")
+
+    cur.execute("PRAGMA table_info(dice_duels)")
+    dice_duel_cols = {row["name"] for row in cur.fetchall()}
+    if "duel_type" not in dice_duel_cols:
+        cur.execute("ALTER TABLE dice_duels ADD COLUMN duel_type TEXT NOT NULL DEFAULT 'high'")
 
     cur.execute("PRAGMA table_info(purchases)")
     purchase_cols = {row["name"] for row in cur.fetchall()}
@@ -1798,7 +1826,8 @@ def beginner_guide_text():
 사용 가능한 일반 명령어
 /출석
 /주사위
-/주사위듀얼 닉네임
+/하이듀얼 닉네임
+/로우듀얼 닉네임
 /거절
 /눈치게임
 /포춘쿠키
@@ -2303,9 +2332,18 @@ def active_dice_duel_for_user(source_id, user_id):
     return dict(row) if row else None
 
 
-def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_keyword):
+def dice_duel_type_label(duel_type):
+    return "하이듀얼" if duel_type == "high" else "로우듀얼"
+
+
+def dice_duel_rule_text(duel_type):
+    return "높은 숫자가 승리합니다." if duel_type == "high" else "낮은 숫자가 승리합니다."
+
+
+def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_keyword, duel_type="high"):
+    duel_type = "low" if duel_type == "low" else "high"
     if not target_keyword:
-        return "사용법: /주사위듀얼 닉네임"
+        return "사용법: /하이듀얼 닉네임 또는 /로우듀얼 닉네임"
 
     target, err = resolve_active_user_by_nickname(
         target_keyword,
@@ -2330,8 +2368,8 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
         date, source_id,
         challenger_user_id, challenger_user_name,
         target_user_id, target_user_name,
-        status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        duel_type, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
     """, (
         today(),
         source_id,
@@ -2339,6 +2377,7 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
         challenger_user_name,
         target["user_id"],
         target["user_name"],
+        duel_type,
         now_str(),
         now_str(),
     ))
@@ -2346,10 +2385,11 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
     conn.close()
 
     return (
-        "🎲 주사위듀얼 신청\n\n"
+        f"🎲 {dice_duel_type_label(duel_type)} 신청\n\n"
         f"{display_nickname(challenger_user_name)}님 vs {display_nickname(target['user_name'])}님\n\n"
         "두 사람이 각각 /주사위 를 굴려주세요.\n"
-        "낮은 숫자가 사진공개입니다.\n\n"
+        f"{dice_duel_rule_text(duel_type)}\n"
+        "지는 사람이 사진공개입니다.\n\n"
         f"{display_nickname(target['user_name'])}님은 원하지 않으면 /거절 을 입력하면 됩니다."
     )
 
@@ -2416,14 +2456,16 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name):
 
     if updated.get("challenger_roll") is None or updated.get("target_roll") is None:
         conn.close()
+        duel_type = updated.get("duel_type") or "high"
         return (
-            "🎲 주사위듀얼 진행 중\n\n"
+            f"🎲 {dice_duel_type_label(duel_type)} 진행 중\n\n"
             f"{display_nickname(user_name)}님: {dice_value}\n\n"
             "상대도 /주사위 를 굴려주세요."
         )
 
     challenger_roll = int(updated["challenger_roll"])
     target_roll = int(updated["target_roll"])
+    duel_type = updated.get("duel_type") or "high"
     if challenger_roll == target_roll:
         cur.execute("""
         UPDATE dice_duels
@@ -2436,14 +2478,19 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name):
         conn.commit()
         conn.close()
         return (
-            "🎲 주사위듀얼 무승부\n\n"
+            f"🎲 {dice_duel_type_label(duel_type)} 무승부\n\n"
             f"{display_nickname(updated['challenger_user_name'])}님: {challenger_roll}\n"
             f"{display_nickname(updated['target_user_name'])}님: {target_roll}\n\n"
             "동점이라 다시 굴립니다. 두 사람 모두 /주사위!"
         )
 
-    loser_name = updated["challenger_user_name"] if challenger_roll < target_roll else updated["target_user_name"]
-    winner_name = updated["target_user_name"] if challenger_roll < target_roll else updated["challenger_user_name"]
+    if duel_type == "low":
+        challenger_wins = challenger_roll < target_roll
+    else:
+        challenger_wins = challenger_roll > target_roll
+
+    winner_name = updated["challenger_user_name"] if challenger_wins else updated["target_user_name"]
+    loser_name = updated["target_user_name"] if challenger_wins else updated["challenger_user_name"]
 
     cur.execute("""
     UPDATE dice_duels
@@ -2456,11 +2503,13 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name):
     conn.close()
 
     return (
-        "🎲 주사위듀얼 결과\n\n"
+        f"🏆 {dice_duel_type_label(duel_type)} 승패 알림\n\n"
+        f"규칙: {dice_duel_rule_text(duel_type)}\n\n"
         f"{display_nickname(updated['challenger_user_name'])}님: {challenger_roll}\n"
         f"{display_nickname(updated['target_user_name'])}님: {target_roll}\n\n"
         f"승자: {display_nickname(winner_name)}님\n"
-        f"사진공개 대상: {display_nickname(loser_name)}님"
+        f"패자: {display_nickname(loser_name)}님\n\n"
+        f"📸 사진공개 대상: {display_nickname(loser_name)}님"
     )
 
 
@@ -12323,13 +12372,38 @@ def handle(event):
 
     text = simplified_command_text((event.message.text or "").strip())
 
+    if is_unreleased_play_command(text) and not is_operator_room(source_id):
+        reply(event.reply_token, "추후 공개됩니다")
+        return
+
     if text == "/주사위":
-        dice_value = random.randint(0, 100)
-        reply(
-            event.reply_token,
-            "🎲 주사위 결과\n\n"
-            f"{display_nickname(user_name)}님: {dice_value}"
-        )
+        reply(event.reply_token, roll_dice_for_duel_or_normal(source_id, user_id, user_name))
+        return
+
+    if text == "/주사위듀얼" or text.startswith("/주사위듀얼 "):
+        reply(event.reply_token, "🎲 주사위듀얼은 두 가지 타입으로 나뉘었어요.\n\n/하이듀얼 닉네임 - 높은 수 승리\n/로우듀얼 닉네임 - 낮은 수 승리")
+        return
+
+    if text in ["/하이듀얼", "/로우듀얼"]:
+        reply(event.reply_token, "사용법: /하이듀얼 닉네임 또는 /로우듀얼 닉네임")
+        return
+
+    if text.startswith("/하이듀얼 ") or text.startswith("/로우듀얼 "):
+        if is_private_chat(event):
+            reply(event.reply_token, "🎲 듀얼은 같은 방에서만 진행할 수 있어요.\n공창이나 운영방에서 /하이듀얼 닉네임 또는 /로우듀얼 닉네임 으로 신청해 주세요.")
+            return
+        duel_type = "high" if text.startswith("/하이듀얼 ") else "low"
+        command = "/하이듀얼" if duel_type == "high" else "/로우듀얼"
+        target_keyword = text.replace(command, "", 1).strip()
+        reply_many(event.reply_token, split_text_messages(start_dice_duel(source_id, user_id, user_name, target_keyword, duel_type)))
+        return
+
+    if text == "/거절":
+        reply(event.reply_token, reject_dice_duel(source_id, user_id, user_name))
+        return
+
+    if text == "/코드메이트":
+        reply(event.reply_token, code_mate_text(source_id, user_id, user_name))
         return
 
     if text == "/족보업데이트방":
@@ -13224,11 +13298,11 @@ def handle(event):
     # 유저 명령어
     # =========================
     enabled_user_commands = {
-        "/출석", "/주사위", "/주사위듀얼", "/거절",
+        "/출석", "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절",
         "/눈치게임", "/포춘쿠키", "/코드쿠키", "/코드메이트",
         "/명령어", "/가이드",
     }
-    enabled_user_prefixes = ("/주사위듀얼 ",)
+    enabled_user_prefixes = ("/하이듀얼 ", "/로우듀얼 ")
     if text.startswith("/") and text not in enabled_user_commands and not any(text.startswith(prefix) for prefix in enabled_user_prefixes):
         return
 
@@ -13248,11 +13322,21 @@ def handle(event):
         return
 
     if text == "/주사위듀얼" or text.startswith("/주사위듀얼 "):
+        reply(event.reply_token, "🎲 주사위듀얼은 두 가지 타입으로 나뉘었어요.\n\n/하이듀얼 닉네임 - 높은 수 승리\n/로우듀얼 닉네임 - 낮은 수 승리")
+        return
+
+    if text in ["/하이듀얼", "/로우듀얼"]:
+        reply(event.reply_token, "사용법: /하이듀얼 닉네임 또는 /로우듀얼 닉네임")
+        return
+
+    if text.startswith("/하이듀얼 ") or text.startswith("/로우듀얼 "):
         if is_private_chat(event):
-            reply(event.reply_token, "🎲 주사위듀얼은 같은 방에서만 진행할 수 있어요.\n공창에서 /주사위듀얼 닉네임 으로 신청해 주세요.")
+            reply(event.reply_token, "🎲 듀얼은 같은 방에서만 진행할 수 있어요.\n공창에서 /하이듀얼 닉네임 또는 /로우듀얼 닉네임 으로 신청해 주세요.")
             return
-        target_keyword = text.replace("/주사위듀얼", "", 1).strip()
-        reply_many(event.reply_token, split_text_messages(start_dice_duel(source_id, user_id, user_name, target_keyword)))
+        duel_type = "high" if text.startswith("/하이듀얼 ") else "low"
+        command = "/하이듀얼" if duel_type == "high" else "/로우듀얼"
+        target_keyword = text.replace(command, "", 1).strip()
+        reply_many(event.reply_token, split_text_messages(start_dice_duel(source_id, user_id, user_name, target_keyword, duel_type)))
         return
 
     if text == "/거절":
