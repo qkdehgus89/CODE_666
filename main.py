@@ -136,7 +136,7 @@ def is_operator_command(text):
         "/운영명령어", "/전체명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
         "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/족보삭제", "/족보수정", "/족보분류",
-        "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절", "/코드메이트",
+        "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절", "/코드메이트", "/코드메이트초기화",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -199,6 +199,7 @@ def is_enabled_operator_command(text):
         "/로우듀얼",
         "/거절",
         "/코드메이트",
+        "/코드메이트초기화",
     }
     prefix_commands = [
         "/유저검색 ",
@@ -617,6 +618,20 @@ def init_db():
         user_id TEXT NOT NULL,
         user_name TEXT NOT NULL,
         cookie_text TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(date, user_id)
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS code_mate_claims (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        mate_user_id TEXT NOT NULL,
+        mate_user_name TEXT NOT NULL,
         created_at TEXT NOT NULL,
         UNIQUE(date, user_id)
     )
@@ -2332,12 +2347,63 @@ def code_mate_candidates(source_id, user_id):
     return filtered
 
 
+def code_mate_claim_today(user_id):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT *
+    FROM code_mate_claims
+    WHERE date = ?
+      AND user_id = ?
+    ORDER BY id DESC
+    LIMIT 1
+    """, (today(), user_id))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def record_code_mate_claim(source_id, user_id, user_name, mate):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT OR REPLACE INTO code_mate_claims (
+        date, source_id, user_id, user_name,
+        mate_user_id, mate_user_name, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        today(),
+        source_id,
+        user_id,
+        user_name,
+        mate["user_id"],
+        mate["user_name"],
+        now_str(),
+    ))
+    conn.commit()
+    conn.close()
+
+
+def reset_code_mate_claims():
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM code_mate_claims WHERE date = ?", (today(),))
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return f"✅ 코드메이트 초기화 완료\n\n오늘 코드메이트 기록 {count}건을 초기화했습니다."
+
+
 def code_mate_text(source_id, user_id, user_name):
+    if code_mate_claim_today(user_id):
+        return "나온사람이랑 얘기나해;"
+
     candidates = code_mate_candidates(source_id, user_id)
     if not candidates:
         return "💘 코드메이트\n\n아직 매칭할 사람이 부족해요."
 
     mate = random.choice(candidates)
+    record_code_mate_claim(source_id, user_id, user_name, mate)
     return (
         "💘 오늘의 코드메이트\n\n"
         f"{display_nickname(user_name)}님의 코드메이트는...\n"
@@ -12435,6 +12501,13 @@ def handle(event):
 
     if text == "/코드메이트":
         reply(event.reply_token, code_mate_text(source_id, user_id, user_name))
+        return
+
+    if text == "/코드메이트초기화":
+        if not is_operator_room(source_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        reply(event.reply_token, reset_code_mate_claims())
         return
 
     if text == "/족보업데이트방":
