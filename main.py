@@ -1841,6 +1841,7 @@ def beginner_guide_text():
 사용 가능한 일반 명령어
 /출석
 /주사위
+/동전던지기
 /하이듀얼 닉네임
 /로우듀얼 닉네임
 /거절
@@ -1910,6 +1911,7 @@ def all_commands_text():
 ━━━━━━━━━━
 /출석
 /주사위
+/동전던지기
 /눈치게임
 /포춘쿠키
 /코드쿠키
@@ -2607,6 +2609,14 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name):
         f"승자: {display_nickname(winner_name)}님\n"
         f"패자: {display_nickname(loser_name)}님\n\n"
         f"📸 사진공개 대상: {display_nickname(loser_name)}님"
+    )
+
+
+def coin_flip_text(user_name):
+    result = random.choice(["앞면", "뒷면"])
+    return (
+        "🪙 동전던지기 결과\n\n"
+        f"{display_nickname(user_name)}님: {result}"
     )
 
 
@@ -12477,6 +12487,10 @@ def handle(event):
         reply(event.reply_token, roll_dice_for_duel_or_normal(source_id, user_id, user_name))
         return
 
+    if text == "/동전던지기":
+        reply(event.reply_token, coin_flip_text(user_name))
+        return
+
     if text == "/주사위듀얼" or text.startswith("/주사위듀얼 "):
         reply(event.reply_token, "🎲 주사위듀얼은 두 가지 타입으로 나뉘었어요.\n\n/하이듀얼 닉네임 - 높은 수 승리\n/로우듀얼 닉네임 - 낮은 수 승리")
         return
@@ -13402,7 +13416,7 @@ def handle(event):
     # 유저 명령어
     # =========================
     enabled_user_commands = {
-        "/출석", "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절",
+        "/출석", "/주사위", "/동전던지기", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절",
         "/눈치게임", "/포춘쿠키", "/코드쿠키", "/코드메이트",
         "/명령어", "/가이드",
     }
@@ -13423,6 +13437,10 @@ def handle(event):
 
     if text == "/주사위":
         reply(event.reply_token, roll_dice_for_duel_or_normal(source_id, user_id, user_name))
+        return
+
+    if text == "/동전던지기":
+        reply(event.reply_token, coin_flip_text(user_name))
         return
 
     if text == "/주사위듀얼" or text.startswith("/주사위듀얼 "):
