@@ -2595,7 +2595,7 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name, neutral_meat_odd
         duel_type = updated.get("duel_type") or "high"
         return (
             f"🎲 {dice_duel_type_label(duel_type)} 진행 중\n\n"
-            f"{display_nickname(user_name)}님: {dice_value}\n\n"
+            f"{display_nickname(user_name)}님이 주사위를 굴렸습니다.\n\n"
             "상대도 /주사위 를 굴려주세요."
         )
 
