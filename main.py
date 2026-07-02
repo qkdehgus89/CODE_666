@@ -2463,6 +2463,20 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
     if not target_keyword:
         return "사용법: /하이듀얼 닉네임 또는 /로우듀얼 닉네임"
 
+    existing = active_dice_duel_for_user(source_id, challenger_user_id)
+    if existing:
+        opponent_name = (
+            existing["target_user_name"]
+            if existing["challenger_user_id"] == challenger_user_id
+            else existing["challenger_user_name"]
+        )
+        return (
+            "🎲 이미 진행 중인 주사위듀얼이 있어요.\n\n"
+            f"상대: {display_nickname(opponent_name)}님\n"
+            "먼저 현재 대결을 마무리해 주세요.\n"
+            "취소하려면 지목받은 사람이 /거절 을 입력하면 됩니다."
+        )
+
     target, err = resolve_active_user_by_nickname(
         target_keyword,
         exclude_user_id=challenger_user_id,
@@ -2470,10 +2484,6 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
     )
     if err:
         return err
-
-    existing = active_dice_duel_for_user(source_id, challenger_user_id)
-    if existing:
-        return "🎲 진행 중인 주사위듀얼이 있어요.\n\n먼저 현재 대결을 마무리해 주세요."
 
     existing = active_dice_duel_for_user(source_id, target["user_id"])
     if existing:
