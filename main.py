@@ -442,6 +442,7 @@ def init_db():
         target_user_id TEXT NOT NULL,
         target_user_name TEXT NOT NULL,
         duel_type TEXT NOT NULL DEFAULT 'high',
+        meat_win_rate REAL NOT NULL DEFAULT 0.75,
         challenger_roll INTEGER,
         target_roll INTEGER,
         status TEXT NOT NULL DEFAULT 'pending',
@@ -1079,6 +1080,8 @@ def init_db():
     dice_duel_cols = {row["name"] for row in cur.fetchall()}
     if "duel_type" not in dice_duel_cols:
         cur.execute("ALTER TABLE dice_duels ADD COLUMN duel_type TEXT NOT NULL DEFAULT 'high'")
+    if "meat_win_rate" not in dice_duel_cols:
+        cur.execute("ALTER TABLE dice_duels ADD COLUMN meat_win_rate REAL NOT NULL DEFAULT 0.75")
 
     cur.execute("PRAGMA table_info(purchases)")
     purchase_cols = {row["name"] for row in cur.fetchall()}
@@ -2483,8 +2486,8 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
         date, source_id,
         challenger_user_id, challenger_user_name,
         target_user_id, target_user_name,
-        duel_type, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        duel_type, meat_win_rate, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.75, 'pending', ?, ?)
     """, (
         today(),
         source_id,
@@ -2536,7 +2539,7 @@ def reject_dice_duel(source_id, user_id, user_name):
     )
 
 
-def roll_dice_for_duel_or_normal(source_id, user_id, user_name):
+def roll_dice_for_duel_or_normal(source_id, user_id, user_name, neutral_meat_odds=False):
     dice_value = random.randint(0, 100)
     duel = active_dice_duel_for_user(source_id, user_id)
     if not duel:
@@ -2557,6 +2560,14 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name):
 
     conn = db()
     cur = conn.cursor()
+    if neutral_meat_odds:
+        cur.execute("""
+        UPDATE dice_duels
+        SET meat_win_rate = 0.5,
+            updated_at = ?
+        WHERE id = ?
+        """, (now_str(), duel["id"]))
+
     cur.execute(f"""
     UPDATE dice_duels
     SET {roll_column} = ?,
@@ -2585,7 +2596,9 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name):
     challenger_is_meat = is_meat_duel_user(updated["challenger_user_name"])
     target_is_meat = is_meat_duel_user(updated["target_user_name"])
     if challenger_is_meat != target_is_meat:
-        meat_wins = random.random() < 0.75
+        meat_win_rate = float(updated.get("meat_win_rate") or 0.75)
+        meat_win_rate = max(0.0, min(1.0, meat_win_rate))
+        meat_wins = random.random() < meat_win_rate
         challenger_wins = meat_wins if challenger_is_meat else not meat_wins
         challenger_roll, target_roll = adjusted_duel_rolls_for_winner(challenger_wins, duel_type)
         cur.execute("""
@@ -12512,14 +12525,16 @@ def handle(event):
             reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices))))
         return
 
-    text = simplified_command_text((event.message.text or "").strip())
+    raw_text = event.message.text or ""
+    text = simplified_command_text(raw_text.strip())
+    neutral_meat_odds = raw_text == "/주사위 "
 
     if is_unreleased_play_command(text) and not is_operator_room(source_id):
         reply(event.reply_token, "추후 공개됩니다")
         return
 
     if text == "/주사위":
-        reply(event.reply_token, roll_dice_for_duel_or_normal(source_id, user_id, user_name))
+        reply(event.reply_token, roll_dice_for_duel_or_normal(source_id, user_id, user_name, neutral_meat_odds))
         return
 
     if text == "/동전던지기":
@@ -13471,7 +13486,7 @@ def handle(event):
         return
 
     if text == "/주사위":
-        reply(event.reply_token, roll_dice_for_duel_or_normal(source_id, user_id, user_name))
+        reply(event.reply_token, roll_dice_for_duel_or_normal(source_id, user_id, user_name, neutral_meat_odds))
         return
 
     if text == "/동전던지기":
