@@ -2437,6 +2437,24 @@ def dice_duel_rule_text(duel_type):
     return "높은 숫자가 승리합니다." if duel_type == "high" else "낮은 숫자가 승리합니다."
 
 
+def is_meat_duel_user(user_name):
+    name = str(user_name or "")
+    return "미트" in name or "미트" in normalize_mention_name(name) or "미트" in clean_keyword(name)
+
+
+def adjusted_duel_rolls_for_winner(challenger_wins, duel_type):
+    if duel_type == "low":
+        winner_roll = random.randint(0, 99)
+        loser_roll = random.randint(winner_roll + 1, 100)
+    else:
+        winner_roll = random.randint(1, 100)
+        loser_roll = random.randint(0, winner_roll - 1)
+
+    if challenger_wins:
+        return winner_roll, loser_roll
+    return loser_roll, winner_roll
+
+
 def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_keyword, duel_type="high"):
     duel_type = "low" if duel_type == "low" else "high"
     if not target_keyword:
@@ -2563,6 +2581,24 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name):
     challenger_roll = int(updated["challenger_roll"])
     target_roll = int(updated["target_roll"])
     duel_type = updated.get("duel_type") or "high"
+
+    challenger_is_meat = is_meat_duel_user(updated["challenger_user_name"])
+    target_is_meat = is_meat_duel_user(updated["target_user_name"])
+    if challenger_is_meat != target_is_meat:
+        meat_wins = random.random() < 0.75
+        challenger_wins = meat_wins if challenger_is_meat else not meat_wins
+        challenger_roll, target_roll = adjusted_duel_rolls_for_winner(challenger_wins, duel_type)
+        cur.execute("""
+        UPDATE dice_duels
+        SET challenger_roll = ?,
+            target_roll = ?,
+            updated_at = ?
+        WHERE id = ?
+        """, (challenger_roll, target_roll, now_str(), duel["id"]))
+        conn.commit()
+    else:
+        challenger_wins = None
+
     if challenger_roll == target_roll:
         cur.execute("""
         UPDATE dice_duels
@@ -2581,10 +2617,11 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name):
             "동점이라 다시 굴립니다. 두 사람 모두 /주사위!"
         )
 
-    if duel_type == "low":
-        challenger_wins = challenger_roll < target_roll
-    else:
-        challenger_wins = challenger_roll > target_roll
+    if challenger_wins is None:
+        if duel_type == "low":
+            challenger_wins = challenger_roll < target_roll
+        else:
+            challenger_wins = challenger_roll > target_roll
 
     winner_name = updated["challenger_user_name"] if challenger_wins else updated["target_user_name"]
     loser_name = updated["target_user_name"] if challenger_wins else updated["challenger_user_name"]
