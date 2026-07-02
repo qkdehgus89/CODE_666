@@ -264,10 +264,8 @@ def is_unreleased_play_command(text):
     if not text:
         return False
     return (
-        text in {"/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절", "/코드메이트"}
+        text in {"/주사위듀얼", "/코드메이트"}
         or text.startswith("/주사위듀얼 ")
-        or text.startswith("/하이듀얼 ")
-        or text.startswith("/로우듀얼 ")
     )
 
 
