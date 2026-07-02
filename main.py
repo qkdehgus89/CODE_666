@@ -2445,17 +2445,24 @@ def is_meat_duel_user(user_name):
     return "미트" in name or "미트" in normalize_mention_name(name) or "미트" in clean_keyword(name)
 
 
-def adjusted_duel_rolls_for_winner(challenger_wins, duel_type):
+def adjusted_current_duel_roll_for_winner(fixed_roll, current_should_win, duel_type):
+    fixed_roll = int(fixed_roll)
     if duel_type == "low":
-        winner_roll = random.randint(0, 99)
-        loser_roll = random.randint(winner_roll + 1, 100)
-    else:
-        winner_roll = random.randint(1, 100)
-        loser_roll = random.randint(0, winner_roll - 1)
+        if current_should_win:
+            if fixed_roll <= 0:
+                return None
+            return random.randint(0, fixed_roll - 1)
+        if fixed_roll >= 100:
+            return None
+        return random.randint(fixed_roll + 1, 100)
 
-    if challenger_wins:
-        return winner_roll, loser_roll
-    return loser_roll, winner_roll
+    if current_should_win:
+        if fixed_roll >= 100:
+            return None
+        return random.randint(fixed_roll + 1, 100)
+    if fixed_roll <= 0:
+        return None
+    return random.randint(0, fixed_roll - 1)
 
 
 def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_keyword, duel_type="high"):
@@ -2550,23 +2557,32 @@ def reject_dice_duel(source_id, user_id, user_name):
 
 
 def roll_dice_for_duel_or_normal(source_id, user_id, user_name, neutral_meat_odds=False):
-    dice_value = random.randint(0, 100)
     duel = active_dice_duel_for_user(source_id, user_id)
     if not duel:
+        dice_value = random.randint(0, 100)
         return (
             "🎲 주사위 결과\n\n"
             f"{display_nickname(user_name)}님: {dice_value}"
         )
 
     if user_id not in (duel["challenger_user_id"], duel["target_user_id"]):
+        dice_value = random.randint(0, 100)
         return (
             "🎲 주사위 결과\n\n"
             f"{display_nickname(user_name)}님: {dice_value}"
         )
 
     roll_column = "challenger_roll" if user_id == duel["challenger_user_id"] else "target_roll"
+    other_roll_column = "target_roll" if roll_column == "challenger_roll" else "challenger_roll"
     if duel.get(roll_column) is not None:
         return "🎲 이미 이번 주사위듀얼에서 굴렸어요.\n상대가 굴릴 때까지 기다려 주세요."
+
+    duel_type = duel.get("duel_type") or "high"
+    challenger_is_meat = is_meat_duel_user(duel["challenger_user_name"])
+    target_is_meat = is_meat_duel_user(duel["target_user_name"])
+    has_meat_bias = challenger_is_meat != target_is_meat
+    is_first_roll = duel.get(other_roll_column) is None
+    dice_value = random.randint(1, 99) if has_meat_bias and is_first_roll else random.randint(0, 100)
 
     conn = db()
     cur = conn.cursor()
@@ -2595,7 +2611,7 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name, neutral_meat_odd
         duel_type = updated.get("duel_type") or "high"
         return (
             f"🎲 {dice_duel_type_label(duel_type)} 진행 중\n\n"
-            f"{display_nickname(user_name)}님이 주사위를 굴렸습니다.\n\n"
+            f"{display_nickname(user_name)}님: {dice_value}\n\n"
             "상대도 /주사위 를 굴려주세요."
         )
 
@@ -2610,15 +2626,29 @@ def roll_dice_for_duel_or_normal(source_id, user_id, user_name, neutral_meat_odd
         meat_win_rate = max(0.0, min(1.0, meat_win_rate))
         meat_wins = random.random() < meat_win_rate
         challenger_wins = meat_wins if challenger_is_meat else not meat_wins
-        challenger_roll, target_roll = adjusted_duel_rolls_for_winner(challenger_wins, duel_type)
-        cur.execute("""
-        UPDATE dice_duels
-        SET challenger_roll = ?,
-            target_roll = ?,
-            updated_at = ?
-        WHERE id = ?
-        """, (challenger_roll, target_roll, now_str(), duel["id"]))
-        conn.commit()
+
+        current_is_challenger = roll_column == "challenger_roll"
+        current_should_win = challenger_wins if current_is_challenger else not challenger_wins
+        fixed_roll = target_roll if current_is_challenger else challenger_roll
+        adjusted_current_roll = adjusted_current_duel_roll_for_winner(
+            fixed_roll,
+            current_should_win,
+            duel_type,
+        )
+        if adjusted_current_roll is not None:
+            if current_is_challenger:
+                challenger_roll = adjusted_current_roll
+            else:
+                target_roll = adjusted_current_roll
+            cur.execute(f"""
+            UPDATE dice_duels
+            SET {roll_column} = ?,
+                updated_at = ?
+            WHERE id = ?
+            """, (adjusted_current_roll, now_str(), duel["id"]))
+            conn.commit()
+        else:
+            challenger_wins = None
     else:
         challenger_wins = None
 
