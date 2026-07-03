@@ -136,7 +136,7 @@ def is_operator_command(text):
         "/운영명령어", "/전체명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
         "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/족보삭제", "/족보수정", "/족보분류",
-        "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절", "/코드메이트", "/코드메이트초기화",
+        "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -198,6 +198,7 @@ def is_enabled_operator_command(text):
         "/하이듀얼",
         "/로우듀얼",
         "/거절",
+        "/듀얼취소",
         "/코드메이트",
         "/코드메이트초기화",
     }
@@ -1846,6 +1847,7 @@ def beginner_guide_text():
 /하이듀얼 닉네임
 /로우듀얼 닉네임
 /거절
+/듀얼취소
 /눈치게임
 /포춘쿠키
 /코드쿠키
@@ -2415,7 +2417,40 @@ def code_mate_text(source_id, user_id, user_name):
     )
 
 
+DICE_DUEL_EXPIRE_MINUTES = 10
+
+
+def expire_old_dice_duels(source_id=None):
+    cutoff = (datetime.now(KST) - timedelta(minutes=DICE_DUEL_EXPIRE_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = db()
+    cur = conn.cursor()
+    if source_id:
+        cur.execute("""
+        UPDATE dice_duels
+        SET status = 'expired',
+            updated_at = ?,
+            completed_at = ?
+        WHERE source_id = ?
+          AND status IN ('pending', 'rolling')
+          AND created_at <= ?
+        """, (now_str(), now_str(), source_id, cutoff))
+    else:
+        cur.execute("""
+        UPDATE dice_duels
+        SET status = 'expired',
+            updated_at = ?,
+            completed_at = ?
+        WHERE status IN ('pending', 'rolling')
+          AND created_at <= ?
+        """, (now_str(), now_str(), cutoff))
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
 def active_dice_duel_for_user(source_id, user_id):
+    expire_old_dice_duels(source_id)
     conn = db()
     cur = conn.cursor()
     cur.execute("""
@@ -2481,7 +2516,7 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
             "🎲 이미 진행 중인 주사위듀얼이 있어요.\n\n"
             f"상대: {display_nickname(opponent_name)}님\n"
             "먼저 현재 대결을 마무리해 주세요.\n"
-            "취소하려면 지목받은 사람이 /거절 을 입력하면 됩니다."
+            "신청자는 /듀얼취소, 지목받은 사람은 /거절 을 입력하면 됩니다."
         )
 
     target, err = resolve_active_user_by_nickname(
@@ -2525,6 +2560,7 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
         "두 사람이 각각 /주사위 를 굴려주세요.\n"
         f"{dice_duel_rule_text(duel_type)}\n"
         "지는 사람이 사진공개입니다.\n\n"
+        f"{display_nickname(challenger_user_name)}님은 /듀얼취소 로 취소할 수 있어요.\n"
         f"{display_nickname(target['user_name'])}님은 원하지 않으면 /거절 을 입력하면 됩니다."
     )
 
@@ -2553,6 +2589,33 @@ def reject_dice_duel(source_id, user_id, user_name):
     return (
         "🎲 주사위듀얼 거절\n\n"
         f"{display_nickname(user_name)}님이 대결을 거절했습니다."
+    )
+
+
+def cancel_dice_duel(source_id, user_id, user_name):
+    duel = active_dice_duel_for_user(source_id, user_id)
+    if not duel:
+        return "취소할 주사위듀얼이 없어요."
+    if duel["challenger_user_id"] != user_id:
+        return "듀얼취소는 신청한 사람만 사용할 수 있어요.\n지목받은 사람은 /거절 을 입력해 주세요."
+    if duel.get("target_roll") is not None or duel.get("challenger_roll") is not None:
+        return "이미 주사위를 굴린 대결은 취소할 수 없어요."
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    UPDATE dice_duels
+    SET status = 'cancelled',
+        updated_at = ?,
+        completed_at = ?
+    WHERE id = ?
+    """, (now_str(), now_str(), duel["id"]))
+    conn.commit()
+    conn.close()
+
+    return (
+        "🎲 주사위듀얼 취소\n\n"
+        f"{display_nickname(user_name)}님이 대결 신청을 취소했습니다."
     )
 
 
@@ -12603,6 +12666,10 @@ def handle(event):
         reply(event.reply_token, reject_dice_duel(source_id, user_id, user_name))
         return
 
+    if text == "/듀얼취소":
+        reply(event.reply_token, cancel_dice_duel(source_id, user_id, user_name))
+        return
+
     if text == "/코드메이트":
         reply(event.reply_token, code_mate_text(source_id, user_id, user_name))
         return
@@ -13506,7 +13573,7 @@ def handle(event):
     # 유저 명령어
     # =========================
     enabled_user_commands = {
-        "/출석", "/주사위", "/동전던지기", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절",
+        "/출석", "/주사위", "/동전던지기", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절", "/듀얼취소",
         "/눈치게임", "/포춘쿠키", "/코드쿠키", "/코드메이트",
         "/명령어", "/가이드",
     }
@@ -13553,6 +13620,10 @@ def handle(event):
 
     if text == "/거절":
         reply(event.reply_token, reject_dice_duel(source_id, user_id, user_name))
+        return
+
+    if text == "/듀얼취소":
+        reply(event.reply_token, cancel_dice_duel(source_id, user_id, user_name))
         return
 
     if text == "/코드메이트":
