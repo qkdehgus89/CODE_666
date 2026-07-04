@@ -143,7 +143,7 @@ def is_operator_command(text):
         "/가챠", "/가챠시스템", "/가챠횟수", "/상가챠", "/중가챠", "/하가챠",
         "/조각가챠", "/조각", "/대장장이", "/김미트상가챠", "/상점",
         "/회생초기화",
-        "/설렘픽초기화", "/설렘픽정산", "/조각정리", "/경고누적일", "/단벙참여확인", "/단벙참석확인",
+        "/설렘픽초기화", "/설렘픽정산", "/조각정리", "/경고누적일", "/누적경고", "/단벙참여확인", "/단벙참석확인",
         "/유저아이템보유", "/유저아이템삭제", "/운영진친밀도", "/운영진친밀도확인",
         "/진실질문", "/진실목록", "/진실기록", "/진실질문추가",
         "/코인검증", "/정산검증", "/최근오류", "/버전",
@@ -160,7 +160,7 @@ def is_operator_command(text):
         "/상품추가 ", "/상품등록 ", "/상품삭제 ",
         "/사용처리 ", "/구매취소 ", "/아이템지급 ",
         "/유저아이템삭제 ",
-        "/마디수 ", "/전체마디수 ", "/경고누적일 ", "/단벙참여확인 ", "/단벙참석확인 ",
+        "/마디수 ", "/전체마디수 ", "/경고 ", "/경고누적일 ", "/누적경고 ", "/단벙참여확인 ", "/단벙참석확인 ",
         "/운영진친밀도 ", "/운영진친밀도확인 ",
         "/진실질문 ", "/진실기록 ", "/진실질문추가 ",
         "/코인검증 ", "/최근오류 ",
@@ -193,6 +193,9 @@ def is_enabled_operator_command(text):
         "/삭제유저",
         "/마디수",
         "/전체마디수",
+        "/경고",
+        "/경고누적일",
+        "/누적경고",
         "/주사위",
         "/주사위듀얼",
         "/하이듀얼",
@@ -216,6 +219,9 @@ def is_enabled_operator_command(text):
         "/삭제복구",
         "/마디수 ",
         "/전체마디수 ",
+        "/경고 ",
+        "/경고누적일 ",
+        "/누적경고 ",
         "/주사위듀얼 ",
         "/하이듀얼 ",
         "/로우듀얼 ",
@@ -1902,6 +1908,12 @@ def operator_commands_text():
 /마디수
 /마디수 MM-DD
 /전체마디수 MM-DD~MM-DD
+/경고
+/경고 MM-DD
+/경고누적일
+/경고누적일 최소횟수
+/누적경고
+/누적경고 최소횟수
 
 ※ 운영방에서는 위 명령어만 사용합니다."""
 
@@ -1957,6 +1969,12 @@ def all_commands_text():
 /마디수
 /마디수 MM-DD
 /전체마디수 MM-DD~MM-DD
+/경고
+/경고 MM-DD
+/경고누적일
+/경고누적일 최소횟수
+/누적경고
+/누적경고 최소횟수
 
 🛒 테스트
 /상점
@@ -3793,7 +3811,7 @@ def warning_list(date_str, source_id):
     rows = ranking(date_str, source_id)
     result = []
     for row in rows:
-        if row["count"] < WARNING_LIMIT:
+        if int(row["count"] or 0) <= WARNING_LIMIT:
             result.append(row)
     return result
 
@@ -3801,20 +3819,24 @@ def warning_list(date_str, source_id):
 def warning_text_for_staff(date_str, source_id):
     rows = warning_list(date_str, source_id)
     rows = sorted(rows, key=lambda r: (int(r["count"] or 0), str(r["user_name"])))
+    title_date = date_str
 
     if not rows:
         return (
-            "✅ 오늘의 경고 대상이 없습니다.\n\n"
+            "✅ 경고 대상이 없습니다.\n\n"
+            f"기준일: {title_date}\n\n"
             "기준\n"
-            f"📌 {WARNING_LIMIT}마디 미만\n\n"
+            f"📌 {WARNING_LIMIT}마디 이하\n\n"
             "현재 모든 인원이 기준을 충족했습니다."
         )
 
     lines = [
-        "⚠️ 오늘의 경고 대상",
+        "⚠️ 경고 대상",
+        "",
+        f"기준일: {title_date}",
         "",
         "기준",
-        f"📌 {WARNING_LIMIT}마디 미만",
+        f"📌 {WARNING_LIMIT}마디 이하",
         "",
         "━━━━━━━━━━",
     ]
@@ -3828,7 +3850,7 @@ def warning_text_for_staff(date_str, source_id):
         f"총 {len(rows)}명",
         "",
         "🚨 위험구간",
-        f"{WARNING_LIMIT}마디 미만 인원입니다.",
+        f"{WARNING_LIMIT}마디 이하 인원입니다.",
     ]
     return "\n".join(lines)
 
@@ -3906,7 +3928,7 @@ def warning_accumulated_days_text(source_id, min_days=1):
     LEFT JOIN deleted_users d
       ON d.original_user_id = c.user_id
     WHERE c.source_id = ?
-      AND c.count < ?
+      AND c.count <= ?
       AND d.original_user_id IS NULL
       AND COALESCE(u.is_active, 1) = 1
     GROUP BY c.user_id
@@ -3919,7 +3941,7 @@ def warning_accumulated_days_text(source_id, min_days=1):
     lines = [
         "⚠️ 경고 누적일",
         "",
-        f"기준: 일별 {WARNING_LIMIT}마디 미만",
+        f"기준: 일별 {WARNING_LIMIT}마디 이하",
         f"표시: {min_days}회 이상 누적",
         "",
         "━━━━━━━━━━",
@@ -12929,11 +12951,15 @@ def handle(event):
         reply_many(event.reply_token, split_text_messages("\n".join(lines)))
         return
 
-    if text == "/경고":
+    if text == "/경고" or text.startswith("/경고 "):
         if not is_staff(user_id):
             reply(event.reply_token, operator_only_warning())
             return
-        reply_many(event.reply_token, split_text_messages(warning_text_for_staff(date_str, COUNT_SOURCE_ID)))
+        target_date, err = parse_short_date_arg(text.replace("/경고", "", 1).strip())
+        if err:
+            reply(event.reply_token, err.replace("/마디수", "/경고"))
+            return
+        reply_many(event.reply_token, split_text_messages(warning_text_for_staff(target_date, COUNT_SOURCE_ID)))
         return
 
     if text == "/마디수" or text.startswith("/마디수 "):
@@ -12958,11 +12984,12 @@ def handle(event):
         reply_many(event.reply_token, split_text_messages(madi_range_history_text(start_date, end_date, COUNT_SOURCE_ID)))
         return
 
-    if text == "/경고누적일" or text.startswith("/경고누적일 "):
+    if text == "/경고누적일" or text.startswith("/경고누적일 ") or text == "/누적경고" or text.startswith("/누적경고 "):
         if not is_staff(user_id):
             reply(event.reply_token, operator_only_warning())
             return
-        raw_days = text.replace("/경고누적일", "", 1).strip()
+        command_name = "/누적경고" if text.startswith("/누적경고") else "/경고누적일"
+        raw_days = text.replace(command_name, "", 1).strip()
         try:
             min_days = int(raw_days) if raw_days else 1
         except Exception:
