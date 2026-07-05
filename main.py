@@ -3808,12 +3808,36 @@ def total_ranking(source_id, limit=None):
 
 
 def warning_list(date_str, source_id):
-    rows = ranking(date_str, source_id)
-    result = []
-    for row in rows:
-        if int(row["count"] or 0) <= WARNING_LIMIT:
-            result.append(row)
-    return result
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT
+        u.user_id,
+        u.user_name,
+        u.gender,
+        u.is_nomicl,
+        COALESCE(c.count, 0) AS count
+    FROM users u
+    LEFT JOIN counts c
+      ON u.user_id = c.user_id
+     AND c.date = ?
+     AND c.source_id = ?
+    LEFT JOIN attendance a
+      ON a.user_id = u.user_id
+     AND a.date = ?
+    LEFT JOIN deleted_users d
+      ON d.original_user_id = u.user_id
+    WHERE (u.last_seen_source_id = ?
+       OR c.user_id IS NOT NULL)
+      AND COALESCE(u.is_active, 1) = 1
+      AND d.original_user_id IS NULL
+      AND a.user_id IS NULL
+      AND COALESCE(c.count, 0) <= ?
+    ORDER BY count ASC, u.user_name ASC
+    """, (date_str, source_id, date_str, source_id, WARNING_LIMIT))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
 
 
 def warning_text_for_staff(date_str, source_id):
@@ -3827,6 +3851,8 @@ def warning_text_for_staff(date_str, source_id):
             f"기준일: {title_date}\n\n"
             "기준\n"
             f"📌 {WARNING_LIMIT}마디 이하\n\n"
+            "제외\n"
+            "📌 해당 날짜 /출석 완료 유저\n\n"
             "현재 모든 인원이 기준을 충족했습니다."
         )
 
@@ -3837,6 +3863,7 @@ def warning_text_for_staff(date_str, source_id):
         "",
         "기준",
         f"📌 {WARNING_LIMIT}마디 이하",
+        "📌 해당 날짜 /출석 완료 유저 제외",
         "",
         "━━━━━━━━━━",
     ]
@@ -3851,6 +3878,7 @@ def warning_text_for_staff(date_str, source_id):
         "",
         "🚨 위험구간",
         f"{WARNING_LIMIT}마디 이하 인원입니다.",
+        "단, 해당 날짜 /출석 완료 유저는 제외했습니다.",
     ]
     return "\n".join(lines)
 
@@ -3927,9 +3955,13 @@ def warning_accumulated_days_text(source_id, min_days=1):
       ON u.user_id = c.user_id
     LEFT JOIN deleted_users d
       ON d.original_user_id = c.user_id
+    LEFT JOIN attendance a
+      ON a.user_id = c.user_id
+     AND a.date = c.date
     WHERE c.source_id = ?
       AND c.count <= ?
       AND d.original_user_id IS NULL
+      AND a.user_id IS NULL
       AND COALESCE(u.is_active, 1) = 1
     GROUP BY c.user_id
     HAVING warning_days >= ?
@@ -3942,6 +3974,7 @@ def warning_accumulated_days_text(source_id, min_days=1):
         "⚠️ 경고 누적일",
         "",
         f"기준: 일별 {WARNING_LIMIT}마디 이하",
+        "제외: 해당 날짜 /출석 완료 유저",
         f"표시: {min_days}회 이상 누적",
         "",
         "━━━━━━━━━━",
