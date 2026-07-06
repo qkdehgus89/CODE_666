@@ -15,6 +15,7 @@ from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     ApiClient,
+    ApiException,
     Configuration,
     MessagingApi,
     ReplyMessageRequest,
@@ -133,7 +134,7 @@ def is_operator_command(text):
         return False
 
     exact_commands = {
-        "/운영명령어", "/전체명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저",
+        "/운영명령어", "/전체명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저", "/전체유저검사",
         "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/족보삭제", "/족보수정", "/족보분류",
         "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
@@ -177,6 +178,7 @@ def is_enabled_operator_command(text):
         "/운영명령어",
         "/전체명령어",
         "/전체유저",
+        "/전체유저검사",
         "/족보입력",
         "/족보",
         "/수동족보",
@@ -1874,6 +1876,7 @@ def operator_commands_text():
 👤 유저 관리
 ━━━━━━━━━━
 /전체유저
+/전체유저검사
 /유저검색 닉네임
 /유저상세 닉네임
 /닉삭제 닉네임
@@ -1939,6 +1942,7 @@ def all_commands_text():
 
 👤 유저 관리
 /전체유저
+/전체유저검사
 /유저검색 닉네임
 /유저상세 닉네임
 /닉삭제 닉네임
@@ -3591,6 +3595,105 @@ def all_registered_users_text():
             f"{idx}. {display_name}{role_text} / {status}"
         )
 
+    return "\n".join(lines)
+
+
+def line_profile_not_found_error(error):
+    status = getattr(error, "status", None)
+    if status is None:
+        status = getattr(error, "status_code", None)
+    try:
+        status = int(status)
+    except Exception:
+        status = None
+    return status == 404
+
+
+def check_line_member_profile(api, source_id, user_id):
+    if str(source_id or "").startswith("C"):
+        return api.get_group_member_profile(source_id, user_id)
+    if str(source_id or "").startswith("R"):
+        return api.get_room_member_profile(source_id, user_id)
+    raise ValueError("메인방 source_id가 그룹/룸 형식이 아닙니다.")
+
+
+def verify_active_users_with_line_text(source_id):
+    source_id = str(source_id or "").strip()
+    if not source_id or source_id == "NO_SOURCE_ID":
+        return "⚠️ 전체유저 검사 실패\n\nCOUNT_SOURCE_ID가 설정되어 있지 않습니다."
+    if not (source_id.startswith("C") or source_id.startswith("R")):
+        return (
+            "⚠️ 전체유저 검사 실패\n\n"
+            "COUNT_SOURCE_ID가 그룹/룸 ID가 아니라서 멤버 프로필 검사를 할 수 없습니다."
+        )
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT u.user_id, u.user_name
+    FROM users u
+    LEFT JOIN deleted_users d
+      ON d.original_user_id = u.user_id
+    WHERE COALESCE(u.is_active, 1) = 1
+      AND d.original_user_id IS NULL
+      AND COALESCE(u.user_id, '') != ''
+    ORDER BY u.user_name ASC
+    """)
+    rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
+
+    if not rows:
+        return "📋 전체유저 검사\n\n검사할 활성 유저가 없습니다."
+
+    checked = 0
+    deactivated = []
+    pending_errors = []
+    with ApiClient(config) as client:
+        api = MessagingApi(client)
+        for row in rows:
+            checked += 1
+            try:
+                check_line_member_profile(api, source_id, row["user_id"])
+            except ApiException as e:
+                if line_profile_not_found_error(e):
+                    set_user_active_by_id(row["user_id"], 0)
+                    deactivate_genealogy_profile(row["user_id"])
+                    deactivated.append(row)
+                    continue
+                pending_errors.append(f"{row['user_name']} / status={getattr(e, 'status', '-')}")
+            except Exception as e:
+                pending_errors.append(f"{row['user_name']} / {type(e).__name__}")
+
+            if len(pending_errors) >= 5:
+                break
+
+    lines = [
+        "🔎 전체유저 검사 완료",
+        "",
+        f"검사 기준방: {source_id}",
+        f"검사 인원: {checked}명",
+        f"비활성 처리: {len(deactivated)}명",
+    ]
+
+    if deactivated:
+        lines += ["", "비활성 처리된 유저"]
+        for row in deactivated[:30]:
+            lines.append(f"- {row['user_name']}")
+        if len(deactivated) > 30:
+            lines.append(f"...외 {len(deactivated) - 30}명")
+
+    if pending_errors:
+        lines += [
+            "",
+            "확인 보류",
+            "LINE 권한/서버 오류 가능성이 있어 자동 비활성 처리하지 않았습니다.",
+        ]
+        lines.extend(f"- {item}" for item in pending_errors[:10])
+
+    lines += [
+        "",
+        "다시 확인: /전체유저",
+    ]
     return "\n".join(lines)
 
 
@@ -13051,6 +13154,13 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
         reply_many(event.reply_token, split_text_messages(all_registered_users_text()))
+        return
+
+    if text == "/전체유저검사":
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        reply_many(event.reply_token, split_text_messages(verify_active_users_with_line_text(COUNT_SOURCE_ID)))
         return
 
     if text == "/족보동기화":
