@@ -13213,7 +13213,7 @@ def caution_users_text():
             reason = row["reason"] or "-"
             lines.append(f"#{row['id']} {row['user_name']} / {reason}")
         lines.append("")
-    lines += ["", "추가: /주의유저추가 닉네임 메모", "삭제: /주의유저삭제 번호"]
+    lines += ["", "추가: /주의유저추가 닉네임 메모", "삭제: /주의유저삭제 번호1 번호2 ..."]
     return "\n".join(lines)
 
 
@@ -13262,20 +13262,52 @@ def add_caution_user(keyword, reason, added_by):
 
 
 def delete_caution_user(arg):
-    raw = str(arg or "").strip().lstrip("#")
-    if not raw.isdigit():
-        return "사용법: /주의유저삭제 번호"
+    raw = str(arg or "").strip()
+    numbers = []
+    for token in re.split(r"[\s,]+", raw):
+        token = token.strip().lstrip("#")
+        if not token:
+            continue
+        if not token.isdigit():
+            return "사용법: /주의유저삭제 번호1 번호2 ..."
+        numbers.append(token)
+    if not numbers:
+        return "사용법: /주의유저삭제 번호1 번호2 ..."
+
+    seen = set()
+    ordered_numbers = []
+    for number in numbers:
+        if number in seen:
+            continue
+        seen.add(number)
+        ordered_numbers.append(number)
+
     conn = db()
     cur = conn.cursor()
-    cur.execute("SELECT id, user_name FROM caution_users WHERE id = ? AND COALESCE(is_active, 1) = 1", (raw,))
-    row = cur.fetchone()
-    if not row:
-        conn.close()
-        return "삭제할 주의유저를 찾지 못했어요."
-    cur.execute("UPDATE caution_users SET is_active = 0 WHERE id = ?", (row["id"],))
+    deleted = []
+    missing = []
+    for number in ordered_numbers:
+        cur.execute(
+            "SELECT id, user_name FROM caution_users WHERE id = ? AND COALESCE(is_active, 1) = 1",
+            (number,)
+        )
+        row = cur.fetchone()
+        if not row:
+            missing.append(number)
+            continue
+        cur.execute("UPDATE caution_users SET is_active = 0 WHERE id = ?", (row["id"],))
+        deleted.append(dict(row))
     conn.commit()
     conn.close()
-    return f"✅ 주의유저 삭제 완료\n\n대상: {row['user_name']}"
+
+    if not deleted:
+        return "삭제할 주의유저를 찾지 못했어요."
+
+    lines = ["✅ 주의유저 삭제 완료", ""]
+    lines.extend([f"- #{row['id']} {row['user_name']}" for row in deleted])
+    if missing:
+        lines += ["", "찾지 못한 번호", ", ".join(f"#{number}" for number in missing)]
+    return "\n".join(lines)
 
 
 def find_caution_user_by_original_id(user_id):
