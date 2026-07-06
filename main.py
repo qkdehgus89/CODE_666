@@ -39,6 +39,7 @@ SECRET = os.getenv("LINE_CHANNEL_SECRET", "").strip()
 
 COUNT_SOURCE_ID = os.getenv("COUNT_SOURCE_ID", "").strip()
 ADMIN_SOURCE_ID = os.getenv("ADMIN_SOURCE_ID", "").strip()
+AUTH_SOURCE_ID = os.getenv("AUTH_SOURCE_ID", "").strip()
 
 # 운영진방 여러 개 지원
 # Railway Variables 예:
@@ -46,6 +47,15 @@ ADMIN_SOURCE_ID = os.getenv("ADMIN_SOURCE_ID", "").strip()
 ADMIN_SOURCE_IDS = {
     x.strip() for x in ADMIN_SOURCE_ID.split(",") if x.strip()
 }
+
+# 인증방 여러 개 지원
+# Railway Variables 예:
+# AUTH_SOURCE_ID=C인증방ID1,C인증방ID2
+AUTH_SOURCE_IDS = {
+    x.strip() for x in AUTH_SOURCE_ID.split(",") if x.strip()
+}
+if not AUTH_SOURCE_IDS and COUNT_SOURCE_ID:
+    AUTH_SOURCE_IDS.add(COUNT_SOURCE_ID)
 
 DB_PATH = os.getenv("DB_PATH", "madi_counter.db").strip()
 PORT = int(os.getenv("PORT", "5000"))
@@ -12674,6 +12684,35 @@ def deleted_users_text():
     return "\n".join(lines)
 
 
+def find_deleted_user_by_original_id(user_id):
+    user_id = str(user_id or "").strip()
+    if not user_id:
+        return None
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT id, original_user_id, user_name, deleted_by, deleted_at
+    FROM deleted_users
+    WHERE original_user_id = ?
+    ORDER BY id DESC
+    LIMIT 1
+    """, (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def rejoin_notice_text(deleted_row):
+    return (
+        "⚠️ 재입장 유저 감지\n\n"
+        f"대상: {deleted_row.get('user_name') or '-'}\n"
+        f"삭제일: {deleted_row.get('deleted_at') or '-'}\n"
+        f"삭제자: {deleted_row.get('deleted_by') or '-'}\n\n"
+        "삭제유저 DB에 기록이 남아있는 유저입니다.\n"
+        "필요하면 /삭제유저 에서 기록을 확인해 주세요."
+    )
+
+
 def restore_deleted_user_by_index(arg):
     conn = db()
     cur = conn.cursor()
@@ -14252,14 +14291,23 @@ if MemberJoinedEvent is not None:
     def handle_member_joined(event):
         try:
             source_id = get_source_id(event)
+            notices = []
 
             for member in event.joined.members:
                 joined_user_id = getattr(member, "user_id", None)
 
                 if joined_user_id:
+                    deleted_row = find_deleted_user_by_original_id(joined_user_id)
+                    if source_id in AUTH_SOURCE_IDS and deleted_row:
+                        notices.append(rejoin_notice_text(deleted_row))
+
                     # 닉네임은 첫 메시지 때 최신화되지만, 일단 재활성화
                     set_user_active_by_id(joined_user_id, 1)
                     print("MEMBER JOINED:", source_id, joined_user_id)
+
+            reply_token = getattr(event, "reply_token", None)
+            if notices and reply_token:
+                reply_many(reply_token, split_text_messages("\n\n".join(notices)))
 
         except Exception as e:
             log_error("MEMBER_JOINED_ERROR", e)
