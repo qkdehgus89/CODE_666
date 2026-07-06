@@ -1200,12 +1200,18 @@ def init_db():
         user_id TEXT,
         user_name TEXT NOT NULL,
         normalized_name TEXT NOT NULL,
+        category TEXT DEFAULT 'unknown',
         reason TEXT,
         added_by TEXT,
         created_at TEXT NOT NULL,
         is_active INTEGER NOT NULL DEFAULT 1
     )
     """)
+
+    cur.execute("PRAGMA table_info(caution_users)")
+    caution_user_cols = {row["name"] for row in cur.fetchall()}
+    if "category" not in caution_user_cols:
+        cur.execute("ALTER TABLE caution_users ADD COLUMN category TEXT DEFAULT 'unknown'")
 
     cur.execute("""
     DELETE FROM heart_picks
@@ -1511,6 +1517,18 @@ def init_db():
             raw = f"{name}|{birth}|{region}"
             return re.sub(r"[^0-9A-Za-z가-힣]+", "", raw)
 
+        def caution_seed_category(name, group_label):
+            if group_label == "여":
+                return "female"
+            if group_label in {"남", "노미클"}:
+                return "male"
+            return {
+                "앵뚜": "female",
+                "띠띠": "female",
+                "까꿍": "female",
+                "주둥": "female",
+            }.get(str(name or "").strip(), "male")
+
         caution_rows = [
             ("앵뚜", "92", "양주", "방장"),
             ("사부", "87", "창원", "관리자"),
@@ -1619,12 +1637,13 @@ def init_db():
             reason = f"CODE_666 기준 주의명단 / {group_label}"
             cur.execute("""
             INSERT INTO caution_users (
-                user_id, user_name, normalized_name, reason, added_by, created_at, is_active
-            ) VALUES (?, ?, ?, ?, ?, ?, 1)
+                user_id, user_name, normalized_name, category, reason, added_by, created_at, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
             """, (
                 None,
                 display_name,
                 key,
+                caution_seed_category(name, group_label),
                 reason,
                 "system",
                 created_at,
@@ -1633,6 +1652,36 @@ def init_db():
         cur.execute(
             "INSERT INTO system_flags (key, value) VALUES ('code666_caution_roster_seed_20260706_v1', ?)",
             (created_at,)
+        )
+
+    cur.execute("SELECT value FROM system_flags WHERE key = 'code666_caution_category_backfill_20260706_v1'")
+    caution_category_done = cur.fetchone()
+    if not caution_category_done:
+        female_names = {"앵뚜", "띠띠", "까꿍", "주둥"}
+        cur.execute("""
+        SELECT id, user_name, reason
+        FROM caution_users
+        WHERE COALESCE(is_active, 1) = 1
+        """)
+        for row in cur.fetchall():
+            user_name_value = str(row["user_name"] or "")
+            reason_value = str(row["reason"] or "")
+            category = "unknown"
+            if "/ 여" in reason_value:
+                category = "female"
+            elif "/ 남" in reason_value or "/ 노미클" in reason_value:
+                category = "male"
+            else:
+                name_match = re.match(r"\s*([가-힣A-Za-z]+)", user_name_value)
+                name_only = name_match.group(1) if name_match else ""
+                if name_only in female_names:
+                    category = "female"
+                elif "CODE_666 기준 주의명단" in reason_value:
+                    category = "male"
+            cur.execute("UPDATE caution_users SET category = ? WHERE id = ?", (category, row["id"]))
+        cur.execute(
+            "INSERT INTO system_flags (key, value) VALUES ('code666_caution_category_backfill_20260706_v1', ?)",
+            (now_str(),)
         )
 
     conn.commit()
@@ -13128,20 +13177,42 @@ def caution_users_text():
     conn = db()
     cur = conn.cursor()
     cur.execute("""
-    SELECT id, user_name, reason, added_by, created_at
+    SELECT id, user_name, category, reason, added_by, created_at
     FROM caution_users
     WHERE COALESCE(is_active, 1) = 1
-    ORDER BY id DESC
-    LIMIT 80
+    ORDER BY
+        CASE category
+            WHEN 'male' THEN 1
+            WHEN 'female' THEN 2
+            ELSE 3
+        END,
+        id ASC
     """)
     rows = cur.fetchall()
     conn.close()
     if not rows:
         return "⚠️ 주의유저 목록이 없습니다."
     lines = ["⚠️ 주의유저 목록", ""]
+    groups = {
+        "male": [],
+        "female": [],
+        "unknown": [],
+    }
     for row in rows:
-        reason = row["reason"] or "-"
-        lines.append(f"#{row['id']} {row['user_name']} / 메모: {reason} / 등록자: {row['added_by'] or '-'}")
+        category = str(row["category"] or "unknown").strip().lower()
+        if category not in groups:
+            category = "unknown"
+        groups[category].append(row)
+
+    for title, key in [("남", "male"), ("여", "female"), ("미분류", "unknown")]:
+        group_rows = groups[key]
+        if not group_rows:
+            continue
+        lines += [f"✨{title} ({len(group_rows)})", ""]
+        for row in group_rows:
+            reason = row["reason"] or "-"
+            lines.append(f"#{row['id']} {row['user_name']} / {reason}")
+        lines.append("")
     lines += ["", "추가: /주의유저추가 닉네임 메모", "삭제: /주의유저삭제 번호"]
     return "\n".join(lines)
 
@@ -13155,9 +13226,15 @@ def add_caution_user(keyword, reason, added_by):
     matches = find_users(keyword, limit=5)
     target_user_id = None
     target_name = keyword
+    category = "unknown"
     if len(matches) == 1:
         target_user_id = matches[0]["user_id"]
         target_name = matches[0]["user_name"]
+        gender = effective_user_gender(matches[0], target_name)
+        if gender == "female":
+            category = "female"
+        elif gender == "male" or int(row_value(matches[0], "is_nomicl", 0) or 0) == 1:
+            category = "male"
     elif len(matches) > 1:
         lines = ["⚠️ 주의유저 추가 확인 필요", "", "비슷한 유저가 여러 명입니다. 더 정확히 입력해 주세요.", ""]
         for idx, row in enumerate(matches, 1):
@@ -13168,12 +13245,13 @@ def add_caution_user(keyword, reason, added_by):
     cur = conn.cursor()
     cur.execute("""
     INSERT INTO caution_users (
-        user_id, user_name, normalized_name, reason, added_by, created_at, is_active
-    ) VALUES (?, ?, ?, ?, ?, ?, 1)
+        user_id, user_name, normalized_name, category, reason, added_by, created_at, is_active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
     """, (
         target_user_id,
         target_name,
         caution_name_key(target_name),
+        category,
         reason,
         added_by,
         now_str(),
