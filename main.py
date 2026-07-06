@@ -40,6 +40,7 @@ SECRET = os.getenv("LINE_CHANNEL_SECRET", "").strip()
 COUNT_SOURCE_ID = os.getenv("COUNT_SOURCE_ID", "").strip()
 ADMIN_SOURCE_ID = os.getenv("ADMIN_SOURCE_ID", "").strip()
 AUTH_SOURCE_ID = os.getenv("AUTH_SOURCE_ID", "").strip()
+BLACKLIST_SOURCE_ID = os.getenv("BLACKLIST_SOURCE_ID", "").strip()
 
 # 운영진방 여러 개 지원
 # Railway Variables 예:
@@ -56,6 +57,13 @@ AUTH_SOURCE_IDS = {
 }
 if not AUTH_SOURCE_IDS and COUNT_SOURCE_ID:
     AUTH_SOURCE_IDS.add(COUNT_SOURCE_ID)
+
+# 블랙리스트 알림방 여러 개 지원
+# Railway Variables 예:
+# BLACKLIST_SOURCE_ID=C블랙리스트방ID1,C블랙리스트방ID2
+BLACKLIST_SOURCE_IDS = {
+    x.strip() for x in BLACKLIST_SOURCE_ID.split(",") if x.strip()
+}
 
 DB_PATH = os.getenv("DB_PATH", "madi_counter.db").strip()
 PORT = int(os.getenv("PORT", "5000"))
@@ -145,7 +153,7 @@ def is_operator_command(text):
 
     exact_commands = {
         "/운영명령어", "/전체명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저", "/전체유저검사",
-        "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
+        "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/블랙리스트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/족보삭제", "/족보수정", "/족보분류",
         "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/수락", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
         "/마디수", "/전체마디수",
@@ -194,6 +202,7 @@ def is_enabled_operator_command(text):
         "/수동족보",
         "/자동족보",
         "/족보업데이트방",
+        "/블랙리스트방",
         "/족보동기화",
         "/족보인원체크",
         "/족보삭제",
@@ -297,6 +306,9 @@ def count_source_ids():
     # 운영진방 여러 개 카운트 지원
     for admin_source_id in ADMIN_SOURCE_IDS:
         ids.add(admin_source_id)
+
+    for blacklist_source_id in blacklist_source_ids():
+        ids.add(blacklist_source_id)
 
     return ids
 
@@ -1346,6 +1358,43 @@ def get_event_user_id(event):
     return str(user_id).strip()
 
 
+def source_type_label(source_type):
+    source_type = str(source_type or "").lower()
+    if source_type == "group":
+        return "그룹"
+    if source_type == "room":
+        return "룸"
+    if source_type == "user":
+        return "1:1"
+    return source_type or "확인불가"
+
+
+def room_info_text(event, source_id, user_id, user_name):
+    source = getattr(event, "source", None)
+    source_type = getattr(source, "type", "") if source else ""
+    labels = []
+    if source_id == COUNT_SOURCE_ID:
+        labels.append("COUNT_SOURCE_ID")
+    if source_id in ADMIN_SOURCE_IDS:
+        labels.append("ADMIN_SOURCE_ID")
+    if source_id in AUTH_SOURCE_IDS:
+        labels.append("AUTH_SOURCE_ID")
+    if source_id in blacklist_source_ids():
+        labels.append("BLACKLIST_SOURCE_ID")
+
+    return "\n".join([
+        "🧭 방정보",
+        "",
+        f"타입: {source_type_label(source_type)}",
+        f"SOURCE_ID: {source_id or '-'}",
+        f"USER_ID: {user_id or '-'}",
+        f"USER_NAME: {user_name or '-'}",
+        f"현재 설정: {', '.join(labels) if labels else '미지정'}",
+        "",
+        "블랙리스트 알림방으로 쓰려면 해당 방에서 /블랙리스트방 을 입력하면 됩니다.",
+    ])
+
+
 def get_user_name(event):
     """그룹/룸/1:1 환경별 프로필 조회. 실패 시 닉네임 기본값을 분리합니다."""
     user_id = get_event_user_id(event)
@@ -1906,6 +1955,7 @@ def operator_commands_text():
 /수동족보
 /자동족보
 /족보업데이트방
+/블랙리스트방
 /족보동기화
 /족보인원체크
 /족보수정 남/녀/노미클 기존닉 새닉
@@ -1970,6 +2020,7 @@ def all_commands_text():
 /수동족보
 /자동족보
 /족보업데이트방
+/블랙리스트방
 /족보동기화
 /족보인원체크
 /족보수정 남/녀/노미클 기존닉 새닉
@@ -10318,6 +10369,26 @@ def set_bot_setting(key, value, updated_by=""):
     conn.close()
 
 
+def blacklist_source_ids():
+    ids = set(BLACKLIST_SOURCE_IDS)
+    saved_source_id = str(get_bot_setting("blacklist_source_id", "") or "").strip()
+    if saved_source_id:
+        ids.add(saved_source_id)
+    return {source_id for source_id in ids if source_id}
+
+
+def set_blacklist_room(source_id, user_name=""):
+    if not source_id or source_id == "NO_SOURCE_ID":
+        return "방 ID를 확인하지 못했어요. 블랙리스트 알림을 받을 방에서 다시 입력해 주세요."
+    set_bot_setting("blacklist_source_id", source_id, user_name)
+    return (
+        "🚨 블랙리스트 알림방 설정 완료\n\n"
+        "이제 인증방에서 삭제유저 재입장이 감지되면 이 방에 알림이 표시됩니다.\n"
+        "푸시 발송 없이, 이 방에 다음 메시지가 들어올 때 알림이 떠요.\n\n"
+        f"방 ID: {source_id}"
+    )
+
+
 def genealogy_update_source_id():
     return str(get_bot_setting("genealogy_update_source_id", "") or "").strip()
 
@@ -12702,15 +12773,21 @@ def find_deleted_user_by_original_id(user_id):
     return dict(row) if row else None
 
 
-def rejoin_notice_text(deleted_row):
-    return (
+def rejoin_notice_text(deleted_row, source_id=""):
+    lines = [
         "⚠️ 재입장 유저 감지\n\n"
         f"대상: {deleted_row.get('user_name') or '-'}\n"
         f"삭제일: {deleted_row.get('deleted_at') or '-'}\n"
-        f"삭제자: {deleted_row.get('deleted_by') or '-'}\n\n"
-        "삭제유저 DB에 기록이 남아있는 유저입니다.\n"
-        "필요하면 /삭제유저 에서 기록을 확인해 주세요."
-    )
+        f"삭제자: {deleted_row.get('deleted_by') or '-'}"
+    ]
+    if source_id:
+        lines.append(f"감지방: {source_id}")
+    lines += [
+        "",
+        "삭제유저 DB에 기록이 남아있는 유저입니다.",
+        "필요하면 /삭제유저 에서 기록을 확인해 주세요.",
+    ]
+    return "\n".join(lines)
 
 
 def restore_deleted_user_by_index(arg):
@@ -12840,7 +12917,9 @@ def handle(event):
             log_error("TEXT_PROCESS_ERROR", e)
 
         try:
-            if source_id == COUNT_SOURCE_ID:
+            if source_id in count_source_ids() and (
+                message_type != "text" or not message_text.strip().startswith("/")
+            ):
                 public_notices.extend(pop_public_announcements(source_id, current_chat_log_id))
             public_notices.extend(pop_due_nunchi_notices(source_id))
         except Exception as e:
@@ -12923,8 +13002,16 @@ def handle(event):
         reply(event.reply_token, reset_code_mate_claims())
         return
 
+    if text == "/방정보":
+        reply(event.reply_token, room_info_text(event, source_id, user_id, user_name))
+        return
+
     if text == "/족보업데이트방":
         reply(event.reply_token, set_genealogy_update_room(source_id, user_name))
+        return
+
+    if text == "/블랙리스트방":
+        reply(event.reply_token, set_blacklist_room(source_id, user_name))
         return
 
     if text == "/상점":
@@ -14299,7 +14386,7 @@ if MemberJoinedEvent is not None:
                 if joined_user_id:
                     deleted_row = find_deleted_user_by_original_id(joined_user_id)
                     if source_id in AUTH_SOURCE_IDS and deleted_row:
-                        notices.append(rejoin_notice_text(deleted_row))
+                        notices.append(rejoin_notice_text(deleted_row, source_id))
 
                     # 닉네임은 첫 메시지 때 최신화되지만, 일단 재활성화
                     set_user_active_by_id(joined_user_id, 1)
@@ -14307,7 +14394,16 @@ if MemberJoinedEvent is not None:
 
             reply_token = getattr(event, "reply_token", None)
             if notices and reply_token:
-                reply_many(reply_token, split_text_messages("\n\n".join(notices)))
+                blacklist_targets = blacklist_source_ids()
+                if blacklist_targets:
+                    for blacklist_source_id in blacklist_targets:
+                        queue_public_announcement(
+                            blacklist_source_id,
+                            "\n\n".join(notices),
+                            "blacklist_rejoin"
+                        )
+                else:
+                    reply_many(reply_token, split_text_messages("\n\n".join(notices)))
 
         except Exception as e:
             log_error("MEMBER_JOINED_ERROR", e)
