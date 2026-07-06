@@ -4203,6 +4203,24 @@ def set_user_active_by_id(user_id, value):
     return changed
 
 
+def is_active_known_user(user_id):
+    user_id = str(user_id or "").strip()
+    if not user_id:
+        return False
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT 1
+    FROM users
+    WHERE user_id = ?
+      AND COALESCE(is_active, 1) = 1
+    LIMIT 1
+    """, (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    return bool(row)
+
+
 def deactivate_genealogy_profile(user_id):
     conn = db()
     cur = conn.cursor()
@@ -15006,7 +15024,7 @@ if MemberJoinedEvent is not None:
                 joined_user_id = getattr(member, "user_id", None)
 
                 if joined_user_id:
-                    if source_id in auth_source_ids():
+                    if source_id in auth_source_ids() and not is_active_known_user(joined_user_id):
                         caution_row = find_caution_user_by_original_id(joined_user_id)
                         if caution_row:
                             notices.append(caution_rejoin_notice_text(caution_row, source_id))
