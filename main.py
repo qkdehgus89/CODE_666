@@ -13433,6 +13433,56 @@ def restore_deleted_user_by_index(arg):
     return True, f"✅ 삭제유저 복구 완료\n\n대상: {row['user_name']}\n복구 레코드: {restored}개"
 
 
+def restore_deleted_user_by_original_id(user_id, source_id=None):
+    user_id = str(user_id or "").strip()
+    if not user_id:
+        return False, ""
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT *
+    FROM deleted_users
+    WHERE original_user_id = ?
+    ORDER BY id DESC
+    LIMIT 1
+    """, (user_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return False, ""
+
+    snap = json.loads(row["snapshot_json"] or "{}")
+    restored = 0
+    for table, records in snap.items():
+        if ':' in table:
+            continue
+        for rec in records:
+            cols = list(rec.keys())
+            placeholders = ','.join('?' for _ in cols)
+            col_sql = ','.join(cols)
+            try:
+                cur.execute(
+                    f"INSERT OR REPLACE INTO {table} ({col_sql}) VALUES ({placeholders})",
+                    [rec[c] for c in cols]
+                )
+                restored += 1
+            except Exception as e:
+                print("AUTO_RESTORE_SKIP", table, e)
+
+    cur.execute("""
+    UPDATE users
+    SET is_active = 1,
+        last_seen_source_id = COALESCE(?, last_seen_source_id),
+        updated_at = ?
+    WHERE user_id = ?
+    """, (source_id, now_str(), user_id))
+    cur.execute("DELETE FROM deleted_users WHERE id = ?", (row["id"],))
+    conn.commit()
+    conn.close()
+    return True, f"{row['user_name']} / {restored} records"
+
+
 def calculate_manitto_goal_and_rewards(hunter_user_id, target_user_id, manitto_type):
     affinity = get_cumulative_affinity_between(hunter_user_id, target_user_id)
     if affinity >= 500:
@@ -15024,6 +15074,11 @@ if MemberJoinedEvent is not None:
                 joined_user_id = getattr(member, "user_id", None)
 
                 if joined_user_id:
+                    if source_id == COUNT_SOURCE_ID:
+                        restored, restore_detail = restore_deleted_user_by_original_id(joined_user_id, source_id)
+                        if restored:
+                            print("AUTO_RESTORE_DELETED_USER:", restore_detail)
+
                     if source_id in auth_source_ids() and not is_active_known_user(joined_user_id):
                         caution_row = find_caution_user_by_original_id(joined_user_id)
                         if caution_row:
