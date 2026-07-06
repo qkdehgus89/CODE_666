@@ -155,6 +155,7 @@ def is_operator_command(text):
         "/운영명령어", "/전체명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저", "/전체유저검사",
         "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/인증방", "/블랙리스트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/족보삭제", "/족보수정", "/족보분류",
+        "/주의유저",
         "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/수락", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
@@ -170,6 +171,7 @@ def is_operator_command(text):
 
     prefix_commands = [
         "/유저검색 ", "/유저상세 ", "/닉삭제", "/닉삭제번호",
+        "/주의유저추가 ", "/주의유저삭제",
         "/동반 ", "/초대 ", "/여초 ",
         "/족보삭제 ", "/족보수정 ", "/족보분류 ",
         "/하이듀얼 ", "/로우듀얼 ",
@@ -209,6 +211,7 @@ def is_enabled_operator_command(text):
         "/족보삭제",
         "/족보수정",
         "/족보분류",
+        "/주의유저",
         "/미클",
         "/상점",
         "/완전삭제",
@@ -239,6 +242,8 @@ def is_enabled_operator_command(text):
         "/족보삭제 ",
         "/족보수정 ",
         "/족보분류 ",
+        "/주의유저추가 ",
+        "/주의유저삭제",
         "/삭제복구",
         "/마디수 ",
         "/전체마디수 ",
@@ -1190,6 +1195,19 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS caution_users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT,
+        user_name TEXT NOT NULL,
+        normalized_name TEXT NOT NULL,
+        reason TEXT,
+        added_by TEXT,
+        created_at TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1
+    )
+    """)
+
+    cur.execute("""
     DELETE FROM heart_picks
     WHERE id NOT IN (
         SELECT MIN(id)
@@ -1319,6 +1337,168 @@ def init_db():
 
         cur.execute(
             "INSERT INTO system_flags (key, value) VALUES ('attendance_day3_reset_v1', ?)",
+            (created_at,)
+        )
+
+    cur.execute("SELECT value FROM system_flags WHERE key = 'code666_reference_roster_seed_20260706_v1'")
+    roster_seed_done = cur.fetchone()
+    if not roster_seed_done:
+        created_at = now_str()
+
+        # 예전 문답 파싱 오류로 섹션 제목이 나이/지역에 들어간 자동족보 행만 정리합니다.
+        cur.execute("""
+        DELETE FROM genealogy_profiles
+        WHERE source_id != 'manual_genealogy'
+          AND (
+              COALESCE(profile_age, '') LIKE '%방장%'
+              OR COALESCE(profile_age, '') LIKE '%관리자%'
+              OR COALESCE(profile_age, '') LIKE '%인증자%'
+              OR COALESCE(profile_region, '') LIKE '%방장%'
+              OR COALESCE(profile_region, '') LIKE '%관리자%'
+              OR COALESCE(profile_region, '') LIKE '%인증자%'
+              OR COALESCE(profile_nickname, '') LIKE '%동반입장%'
+          )
+        """)
+
+        def roster_key(name, birth, region):
+            raw = f"{name}|{birth}|{region}"
+            return re.sub(r"[^0-9A-Za-z가-힣]+", "", raw)
+
+        roster_rows = [
+            ("앵뚜", "92", "양주", "female", 0, "boss", ""),
+            ("사부", "87", "창원", "male", 0, "admin", ""),
+            ("스팟", "89", "대구", "male", 0, "admin", ""),
+            ("띠띠", "90", "김포💍", "female", 0, "admin", ""),
+            ("찬이", "97", "횡성", "male", 0, "viewer", ""),
+            ("주둥", "92", "파주", "female", 0, "viewer", ""),
+            ("고래", "93", "군포💍", "male", 0, "viewer", ""),
+            ("까꿍", "95", "구미", "female", 0, "viewer", ""),
+
+            ("새로", "80", "용인💍", "male", 0, "", ""),
+            ("블랙", "81", "청주", "male", 0, "", ""),
+            ("초코", "81", "동탄", "male", 0, "", ""),
+            ("지오", "82", "서울", "male", 0, "", ""),
+            ("여비", "84", "창원", "male", 0, "", ""),
+            ("피망", "85", "춘천", "male", 0, "", ""),
+            ("로마", "85", "파주", "male", 0, "", ""),
+            ("케로", "86", "대구", "male", 0, "", ""),
+            ("세로", "86", "전주", "male", 0, "", ""),
+            ("여리", "87", "파주💍", "male", 0, "", ""),
+            ("룰루", "87", "용인💍", "male", 0, "", ""),
+            ("히릿", "87", "인천💍", "male", 0, "", ""),
+            ("럭키", "87", "천안", "male", 0, "", ""),
+            ("쿠키", "87", "대전", "male", 0, "", ""),
+            ("둘리", "87", "일산", "male", 0, "", ""),
+            ("대박", "88", "서울", "male", 0, "", ""),
+            ("수라", "88", "아산", "male", 0, "", ""),
+            ("씽씽", "88", "전주", "male", 0, "", ""),
+            ("미트", "89", "철원", "male", 0, "", ""),
+            ("매수", "89", "대구", "male", 0, "", ""),
+            ("로우", "89", "대구💍", "male", 0, "", ""),
+            ("꼬북", "90", "청주", "male", 0, "", ""),
+            ("리얼", "90", "의정부💍", "male", 0, "", ""),
+            ("뿌꾸", "90", "창원", "male", 0, "", ""),
+            ("번덱", "91", "구리", "male", 0, "", ""),
+            ("쏠이", "91", "오산", "male", 0, "", ""),
+            ("오리", "91", "울산", "male", 0, "", ""),
+            ("오잉", "92", "인천", "male", 0, "", ""),
+            ("지노", "92", "동두천💍", "male", 0, "", ""),
+            ("파커", "92", "양주", "male", 0, "", ""),
+            ("씨유", "92", "수원", "male", 0, "", ""),
+            ("젤리", "93", "서울", "male", 0, "", ""),
+            ("초쿠", "93", "아산", "male", 0, "", ""),
+            ("얍얍", "94", "시흥", "male", 0, "", ""),
+            ("깔이", "95", "전주", "male", 0, "", ""),
+            ("남후", "95", "경기광주", "male", 0, "", ""),
+            ("오댕", "95", "서울", "male", 0, "", ""),
+            ("지구", "95", "서울", "male", 0, "", ""),
+            ("하루", "95", "거제", "male", 0, "", ""),
+            ("태태", "95", "안산", "male", 0, "", ""),
+            ("해달", "96", "광양💍", "male", 0, "", ""),
+            ("을또", "98", "청주", "male", 0, "", ""),
+            ("랑비", "98", "전라광주", "male", 0, "", ""),
+            ("돌돌", "01", "파주", "male", 0, "", ""),
+            ("노아", "02", "인천", "male", 0, "", ""),
+
+            ("소리", "80", "인천", "female", 0, "", ""),
+            ("랑랑", "82", "안양", "female", 0, "", ""),
+            ("죠아", "83", "제천", "female", 0, "", ""),
+            ("지유", "83", "여수", "female", 0, "", ""),
+            ("콤콤", "85", "의정부💍", "female", 0, "", ""),
+            ("나나", "85", "전라광주", "female", 0, "", ""),
+            ("보세", "86", "제주💍", "female", 0, "", ""),
+            ("버터", "87", "인천", "female", 0, "", ""),
+            ("초아", "88", "청주💍", "female", 0, "", ""),
+            ("가지", "88", "전라광주", "female", 0, "", ""),
+            ("힝구", "89", "대전", "female", 0, "", ""),
+            ("아잉", "90", "동탄", "female", 0, "", ""),
+            ("하트", "90", "김해💍", "female", 0, "", ""),
+            ("세계", "90", "서울", "female", 0, "", ""),
+            ("코코", "91", "청주", "female", 0, "", ""),
+            ("봄봄", "91", "용인", "female", 0, "", ""),
+            ("은유", "92", "춘천💍", "female", 0, "", ""),
+            ("이니", "92", "서울", "female", 0, "", ""),
+            ("숭이", "93", "대전", "female", 0, "", ""),
+            ("유주", "93", "대전", "female", 0, "", ""),
+            ("키티", "94", "관악", "female", 0, "", ""),
+            ("조개", "94", "동탄", "female", 0, "", ""),
+            ("죠니", "95", "서울", "female", 0, "", ""),
+            ("이슬", "96", "이천", "female", 0, "", ""),
+            ("사탕", "96", "문경", "female", 0, "", ""),
+            ("하현", "96", "대전", "female", 0, "", ""),
+            ("다정", "96", "이천💍", "female", 0, "", ""),
+            ("화월", "97", "대전", "female", 0, "", ""),
+            ("둥이", "97", "구미", "female", 0, "", ""),
+            ("호피", "99", "대전", "female", 0, "", ""),
+            ("요뜨", "01", "대전", "female", 0, "", ""),
+            ("맹구", "02", "대구", "female", 0, "", ""),
+            ("애기", "02", "수원", "female", 0, "", ""),
+            ("리앗", "03", "전주", "female", 0, "", ""),
+            ("빠루", "04", "서울", "female", 0, "", ""),
+            ("희원", "05", "대구", "female", 0, "", ""),
+
+            ("진로", "80", "용인💍", "male", 1, "", "83지유 동반입장"),
+            ("레드", "92", "서울", "male", 1, "", "02애기 동반입장"),
+            ("망치", "94", "대구", "male", 1, "", "04빠루 동반입장"),
+        ]
+
+        for name, birth, region, gender, is_nomicl, role, join_note in roster_rows:
+            profile_user_id = f"genealogy:seed:{roster_key(name, birth, region)}"
+            cur.execute("""
+            INSERT INTO genealogy_profiles (
+                user_id, user_name, gender, is_nomicl,
+                profile_age, profile_region, profile_join_note, profile_join_date,
+                profile_nickname, profile_role, source_id, form_text, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, 'seed_code666_reference', 'CODE_666 reference roster seed', ?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                user_name = excluded.user_name,
+                gender = excluded.gender,
+                is_nomicl = excluded.is_nomicl,
+                profile_age = excluded.profile_age,
+                profile_region = excluded.profile_region,
+                profile_join_note = excluded.profile_join_note,
+                profile_nickname = excluded.profile_nickname,
+                profile_role = excluded.profile_role,
+                source_id = excluded.source_id,
+                updated_at = excluded.updated_at
+            """, (
+                profile_user_id,
+                name,
+                gender,
+                is_nomicl,
+                birth,
+                region,
+                join_note,
+                name,
+                role,
+                created_at,
+                created_at,
+            ))
+
+        cur.execute(
+            "INSERT INTO system_flags (key, value) VALUES ('code666_reference_roster_seed_20260706_v1', ?)",
             (created_at,)
         )
 
@@ -1947,6 +2127,9 @@ def operator_commands_text():
 /완전삭제
 /삭제유저
 /삭제복구 번호
+/주의유저
+/주의유저추가 닉네임 메모
+/주의유저삭제 번호
 
 ━━━━━━━━━━
 📖 족보
@@ -2015,6 +2198,9 @@ def all_commands_text():
 /완전삭제
 /삭제유저
 /삭제복구 번호
+/주의유저
+/주의유저추가 닉네임 메모
+/주의유저삭제 번호
 
 📖 족보
 /족보입력
@@ -10635,10 +10821,27 @@ def parse_code666_join_form(text_value):
                 return str(fields[key]).strip()
             for saved_key, saved_value in fields.items():
                 saved_key = str(saved_key or "")
+                if key == "사용할닉네임":
+                    if (
+                        "사용" in saved_key
+                        and "닉네임" in saved_key
+                        and str(saved_value).strip()
+                    ):
+                        return str(saved_value).strip()
+                    continue
+                if key == "전에쓰던닉네임":
+                    if (
+                        "전에" in saved_key
+                        and "쓰던" in saved_key
+                        and "닉네임" in saved_key
+                        and str(saved_value).strip()
+                    ):
+                        return str(saved_value).strip()
+                    continue
                 if (
                     saved_key.startswith(key)
-                    or key.startswith(saved_key)
-                    or key in saved_key
+                    or (len(saved_key) >= 3 and key.startswith(saved_key))
+                    or (len(key) >= 3 and key in saved_key)
                 ) and str(saved_value).strip():
                     return str(saved_value).strip()
         return ""
@@ -10716,8 +10919,8 @@ def normalize_code666_birth_year(age_value):
     if len(first) == 2:
         num = int(first)
         # 단독 2자리 값은 현실적인 나이 범위면 현재 연도 기준 년생으로 환산합니다.
-        # 00~09, 81~99는 족보의 년생 표기로 봅니다.
-        if 10 <= num <= 80 and len(numbers) == 1:
+        # 00~09, 80~99는 족보의 년생 표기로 봅니다.
+        if 10 <= num <= 79 and len(numbers) == 1:
             birth_year = datetime.now(KST).year - num + 1
             return f"{birth_year % 100:02d}"
         return f"{num:02d}"
@@ -12049,6 +12252,11 @@ def code666_member_row_role(row, manual_role_map=None):
 
     # 저장된 profile_role은 과거 동기화 상태가 남을 수 있어 출력 기준으로 사용하지 않습니다.
     # 현재 수동족보 섹션 또는 닉네임 표식만 역할 판별에 사용합니다.
+    stored_source_id = str(row_value(row, "source_id") or "").strip()
+    stored_role = str(row_value(row, "profile_role") or "").strip().lower()
+    if stored_source_id == "seed_code666_reference" and stored_role in {"boss", "underboss", "admin", "viewer"}:
+        return stored_role
+
     for value in [
         row_value(row, "user_name"),
         row_value(row, "profile_nickname"),
@@ -12192,6 +12400,7 @@ def code666_member_list_text():
         gp.profile_join_date,
         gp.profile_nickname,
         gp.profile_role,
+        gp.source_id,
         gp.form_text,
         gp.updated_at AS profile_updated_at,
         COALESCE(u.is_active, 1) AS is_active,
@@ -12775,6 +12984,120 @@ def deleted_users_text():
     for i, row in enumerate(rows, 1):
         lines.append(f"{i}. #{row['id']} {row['user_name']} / 삭제일: {row['deleted_at']} / 삭제자: {row['deleted_by'] or '-'}")
     lines += ["", "복구: /삭제복구 번호 또는 /삭제복구 #ID"]
+    return "\n".join(lines)
+
+
+def caution_name_key(name):
+    return clean_keyword(display_nickname(name) or name)
+
+
+def caution_users_text():
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT id, user_name, reason, added_by, created_at
+    FROM caution_users
+    WHERE COALESCE(is_active, 1) = 1
+    ORDER BY id DESC
+    LIMIT 80
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    if not rows:
+        return "⚠️ 주의유저 목록이 없습니다."
+    lines = ["⚠️ 주의유저 목록", ""]
+    for row in rows:
+        reason = row["reason"] or "-"
+        lines.append(f"#{row['id']} {row['user_name']} / 메모: {reason} / 등록자: {row['added_by'] or '-'}")
+    lines += ["", "추가: /주의유저추가 닉네임 메모", "삭제: /주의유저삭제 번호"]
+    return "\n".join(lines)
+
+
+def add_caution_user(keyword, reason, added_by):
+    keyword = str(keyword or "").strip()
+    reason = str(reason or "").strip()
+    if not keyword:
+        return "사용법: /주의유저추가 닉네임 메모"
+
+    matches = find_users(keyword, limit=5)
+    target_user_id = None
+    target_name = keyword
+    if len(matches) == 1:
+        target_user_id = matches[0]["user_id"]
+        target_name = matches[0]["user_name"]
+    elif len(matches) > 1:
+        lines = ["⚠️ 주의유저 추가 확인 필요", "", "비슷한 유저가 여러 명입니다. 더 정확히 입력해 주세요.", ""]
+        for idx, row in enumerate(matches, 1):
+            lines.append(f"{idx}. {row['user_name']}")
+        return "\n".join(lines)
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT INTO caution_users (
+        user_id, user_name, normalized_name, reason, added_by, created_at, is_active
+    ) VALUES (?, ?, ?, ?, ?, ?, 1)
+    """, (
+        target_user_id,
+        target_name,
+        caution_name_key(target_name),
+        reason,
+        added_by,
+        now_str(),
+    ))
+    conn.commit()
+    conn.close()
+    return f"⚠️ 주의유저 등록 완료\n\n대상: {target_name}\n메모: {reason or '-'}"
+
+
+def delete_caution_user(arg):
+    raw = str(arg or "").strip().lstrip("#")
+    if not raw.isdigit():
+        return "사용법: /주의유저삭제 번호"
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("SELECT id, user_name FROM caution_users WHERE id = ? AND COALESCE(is_active, 1) = 1", (raw,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return "삭제할 주의유저를 찾지 못했어요."
+    cur.execute("UPDATE caution_users SET is_active = 0 WHERE id = ?", (row["id"],))
+    conn.commit()
+    conn.close()
+    return f"✅ 주의유저 삭제 완료\n\n대상: {row['user_name']}"
+
+
+def find_caution_user_by_original_id(user_id):
+    user_id = str(user_id or "").strip()
+    if not user_id:
+        return None
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT id, user_id, user_name, reason, added_by, created_at
+    FROM caution_users
+    WHERE user_id = ?
+      AND COALESCE(is_active, 1) = 1
+    ORDER BY id DESC
+    LIMIT 1
+    """, (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def caution_rejoin_notice_text(caution_row, source_id=""):
+    lines = [
+        "⚠️ 주의유저 재입장 감지",
+        "",
+        f"대상: {caution_row.get('user_name') or '-'}",
+        f"메모: {caution_row.get('reason') or '-'}",
+        f"등록자: {caution_row.get('added_by') or '-'}",
+        f"등록일: {caution_row.get('created_at') or '-'}",
+    ]
+    if source_id:
+        lines.append(f"감지방: {source_id}")
+    lines += ["", "주의유저 DB에 기록이 남아있는 유저입니다.", "조회: /주의유저"]
     return "\n".join(lines)
 
 
@@ -13570,6 +13893,35 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
         reply_many(event.reply_token, split_text_messages(deleted_users_text()))
+        return
+
+    if text == "/주의유저":
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        reply_many(event.reply_token, split_text_messages(caution_users_text()))
+        return
+
+    if text == "/주의유저추가" or text.startswith("/주의유저추가 "):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        raw = text.replace("/주의유저추가", "", 1).strip()
+        parts = raw.split(maxsplit=1)
+        if not parts:
+            reply(event.reply_token, "사용법: /주의유저추가 닉네임 메모")
+            return
+        target_keyword = parts[0]
+        reason = parts[1] if len(parts) >= 2 else ""
+        reply_many(event.reply_token, split_text_messages(add_caution_user(target_keyword, reason, user_name)))
+        return
+
+    if text == "/주의유저삭제" or text.startswith("/주의유저삭제"):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        raw = text.replace("/주의유저삭제", "", 1).strip()
+        reply_many(event.reply_token, split_text_messages(delete_caution_user(raw)))
         return
 
     if text.startswith("/삭제복구"):
@@ -14411,9 +14763,14 @@ if MemberJoinedEvent is not None:
                 joined_user_id = getattr(member, "user_id", None)
 
                 if joined_user_id:
-                    deleted_row = find_deleted_user_by_original_id(joined_user_id)
-                    if source_id in auth_source_ids() and deleted_row:
-                        notices.append(rejoin_notice_text(deleted_row, source_id))
+                    if source_id in auth_source_ids():
+                        caution_row = find_caution_user_by_original_id(joined_user_id)
+                        if caution_row:
+                            notices.append(caution_rejoin_notice_text(caution_row, source_id))
+                        else:
+                            deleted_row = find_deleted_user_by_original_id(joined_user_id)
+                            if deleted_row:
+                                notices.append(rejoin_notice_text(deleted_row, source_id))
 
                     # 닉네임은 첫 메시지 때 최신화되지만, 일단 재활성화
                     set_user_active_by_id(joined_user_id, 1)
