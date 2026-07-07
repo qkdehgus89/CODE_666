@@ -1721,7 +1721,7 @@ def init_db():
             (now_str(),)
         )
 
-    cur.execute("SELECT value FROM system_flags WHERE key = 'code666_blacklist_seed_20260707_v3'")
+    cur.execute("SELECT value FROM system_flags WHERE key = 'code666_blacklist_seed_20260707_v4'")
     blacklist_seed_done = cur.fetchone()
     if not blacklist_seed_done:
         created_at = now_str()
@@ -1758,10 +1758,11 @@ def init_db():
 
         for row in blacklist_rows:
             nickname = str(row.get("nickname") or "").strip()
-            age = str(row.get("age") or "").strip()
+            age_raw = str(row.get("age") or "").strip()
+            age = blacklist_seed_age_key(age_raw)
             region = str(row.get("region") or "").strip()
             normalized_name = blacklist_seed_norm(nickname)
-            age_key = blacklist_seed_age_key(age)
+            age_key = age
             reason = str(row.get("reason") or "").strip()
             section = str(row.get("category") or row.get("section") or "").strip()
             if not nickname or not normalized_name or not age_key or not reason:
@@ -1790,7 +1791,7 @@ def init_db():
             ))
 
         cur.execute(
-            "INSERT INTO system_flags (key, value) VALUES ('code666_blacklist_seed_20260707_v3', ?)",
+            "INSERT INTO system_flags (key, value) VALUES ('code666_blacklist_seed_20260707_v4', ?)",
             (created_at,)
         )
 
