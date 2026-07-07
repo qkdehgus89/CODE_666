@@ -1226,6 +1226,31 @@ def init_db():
         cur.execute("ALTER TABLE caution_users ADD COLUMN category TEXT DEFAULT 'unknown'")
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS blacklist_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nickname TEXT NOT NULL,
+        normalized_name TEXT NOT NULL,
+        age TEXT NOT NULL,
+        age_key TEXT NOT NULL,
+        region TEXT,
+        section TEXT,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1
+    )
+    """)
+
+    cur.execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_blacklist_entries_name_age
+    ON blacklist_entries (normalized_name, age_key)
+    """)
+
+    cur.execute("PRAGMA table_info(blacklist_entries)")
+    blacklist_entry_cols = {row["name"] for row in cur.fetchall()}
+    if "region" not in blacklist_entry_cols:
+        cur.execute("ALTER TABLE blacklist_entries ADD COLUMN region TEXT")
+
+    cur.execute("""
     DELETE FROM heart_picks
     WHERE id NOT IN (
         SELECT MIN(id)
@@ -1694,6 +1719,79 @@ def init_db():
         cur.execute(
             "INSERT INTO system_flags (key, value) VALUES ('code666_caution_category_backfill_20260706_v1', ?)",
             (now_str(),)
+        )
+
+    cur.execute("SELECT value FROM system_flags WHERE key = 'code666_blacklist_seed_20260707_v3'")
+    blacklist_seed_done = cur.fetchone()
+    if not blacklist_seed_done:
+        created_at = now_str()
+
+        def blacklist_seed_norm(value):
+            return re.sub(r"[^0-9A-Za-z가-힣]+", "", str(value or ""))
+
+        def blacklist_seed_age_key(value):
+            raw = str(value or "").strip()
+            nums = re.findall(r"\d+", raw)
+            if not nums:
+                return raw
+            num_text = nums[0]
+            if len(num_text) == 2:
+                num = int(num_text)
+                if 10 <= num <= 79:
+                    birth_year = datetime.now(KST).year - num + 1
+                    return f"{birth_year % 100:02d}"
+                return f"{num:02d}"
+            if len(num_text) == 1:
+                return f"{int(num_text):02d}"
+            return num_text[-2:]
+
+        seed_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blacklist_seed.json")
+        try:
+            with open(seed_path, "r", encoding="utf-8") as f:
+                blacklist_rows = json.load(f)
+        except Exception as e:
+            blacklist_rows = []
+            log_error("BLACKLIST_SEED_READ_ERROR", e)
+
+        if blacklist_rows:
+            cur.execute("UPDATE blacklist_entries SET is_active = 0")
+
+        for row in blacklist_rows:
+            nickname = str(row.get("nickname") or "").strip()
+            age = str(row.get("age") or "").strip()
+            region = str(row.get("region") or "").strip()
+            normalized_name = blacklist_seed_norm(nickname)
+            age_key = blacklist_seed_age_key(age)
+            reason = str(row.get("reason") or "").strip()
+            section = str(row.get("category") or row.get("section") or "").strip()
+            if not nickname or not normalized_name or not age_key or not reason:
+                continue
+            cur.execute("""
+            INSERT INTO blacklist_entries (
+                nickname, normalized_name, age, age_key, region, section, reason, created_at, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(normalized_name, age_key)
+            DO UPDATE SET
+                nickname = excluded.nickname,
+                age = excluded.age,
+                region = excluded.region,
+                section = excluded.section,
+                reason = excluded.reason,
+                is_active = 1
+            """, (
+                nickname,
+                normalized_name,
+                age,
+                age_key,
+                region,
+                section,
+                reason,
+                created_at,
+            ))
+
+        cur.execute(
+            "INSERT INTO system_flags (key, value) VALUES ('code666_blacklist_seed_20260707_v3', ?)",
+            (created_at,)
         )
 
     conn.commit()
@@ -10890,6 +10988,69 @@ def set_blacklist_room(source_id, user_name=""):
     )
 
 
+def blacklist_match_keys(*names):
+    keys = set()
+    for name in names:
+        for value in [name, display_nickname(name), normalize_mention_name(name), clean_keyword(name)]:
+            key = re.sub(r"[^0-9A-Za-z가-힣]+", "", str(value or ""))
+            if len(key) >= 2:
+                keys.add(key)
+                without_digits = re.sub(r"^\d+", "", key)
+                if len(without_digits) >= 2:
+                    keys.add(without_digits)
+    return keys
+
+
+def find_blacklist_matches(profile_names, age):
+    age_key = normalize_code666_birth_year(age)
+    if not age_key:
+        return []
+    keys = blacklist_match_keys(*profile_names)
+    if not keys:
+        return []
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT nickname, age, age_key, region, section, reason
+        FROM blacklist_entries
+        WHERE COALESCE(is_active, 1) = 1
+          AND age_key = ?
+          AND normalized_name IN ({",".join("?" for _ in keys)})
+        ORDER BY nickname ASC
+        LIMIT 5
+        """,
+        [age_key, *sorted(keys)]
+    )
+    rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def blacklist_match_warning_text(parsed, profile_name, user_name, source_id, matches):
+    lines = [
+        "🚨 블랙리스트 의심 매칭",
+        "",
+        f"입력 닉네임: {profile_name or '-'}",
+        f"이전 닉네임: {parsed.get('previous_nickname') or '-'}",
+        f"나이/년생: {parsed.get('age') or '-'}",
+        f"지역: {parsed.get('region') or '-'}",
+        f"LINE 닉네임: {user_name or '-'}",
+        f"감지방: {source_id or '-'}",
+        "",
+        "매칭된 블랙리스트",
+    ]
+    for row in matches:
+        lines += [
+            f"- {row.get('nickname')} / {row.get('age')} / {row.get('region') or '-'}",
+            f"  대분류: {row.get('section') or '-'}",
+            f"  사유: {row.get('reason') or '-'}",
+        ]
+    lines += ["", "이름과 나이가 동시에 맞은 경우입니다. 최종 확인 후 조치해 주세요."]
+    return "\n".join(lines)
+
+
 def genealogy_update_source_id():
     return str(get_bot_setting("genealogy_update_source_id", "") or "").strip()
 
@@ -11482,6 +11643,10 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
 
     profile_name = parsed["nickname"] or display_nickname(user_name) or user_name
     parsed = apply_current_user_micl_markers(parsed, profile_name)
+    blacklist_matches = find_blacklist_matches(
+        [profile_name, parsed.get("previous_nickname"), user_name],
+        parsed.get("age")
+    )
     join_date = code666_join_date_text()
     is_update_room = is_genealogy_update_room(source_id)
     identity_name = parsed.get("previous_nickname") or profile_name
@@ -11561,6 +11726,15 @@ def save_code666_join_profile(user_id, user_name, source_id, text_value):
         cleanup_code666_join_form_profiles(cur)
     conn.commit()
     conn.close()
+
+    if blacklist_matches:
+        warning_text = blacklist_match_warning_text(parsed, profile_name, user_name, source_id, blacklist_matches)
+        targets = blacklist_source_ids()
+        if targets:
+            for target_source_id in targets:
+                queue_public_announcement(target_source_id, warning_text, "blacklist_match")
+        else:
+            log_error("BLACKLIST_MATCH_NO_ROOM", warning_text)
 
     return (
         "📖 족보 자동 반영 완료\n\n"
