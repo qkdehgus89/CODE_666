@@ -155,7 +155,7 @@ def is_operator_command(text):
         "/운영명령어", "/전체명령어", "/운영방", "/운영방해제", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저", "/전체유저검사",
         "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/인증방", "/블랙리스트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/족보삭제", "/족보수정", "/족보분류",
-        "/주의유저",
+        "/주의유저", "/블랙리스트", "/블랙추가", "/블랙삭제",
         "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/수락", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
         "/마디수", "/전체마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
@@ -171,7 +171,7 @@ def is_operator_command(text):
 
     prefix_commands = [
         "/유저검색 ", "/유저상세 ", "/닉삭제", "/닉삭제번호",
-        "/주의유저추가 ", "/주의유저삭제",
+        "/주의유저추가 ", "/주의유저삭제", "/블랙추가 ", "/블랙삭제",
         "/동반 ", "/초대 ", "/여초 ",
         "/족보삭제 ", "/족보수정 ", "/족보분류 ",
         "/하이듀얼 ", "/로우듀얼 ",
@@ -214,6 +214,9 @@ def is_enabled_operator_command(text):
         "/족보수정",
         "/족보분류",
         "/주의유저",
+        "/블랙리스트",
+        "/블랙추가",
+        "/블랙삭제",
         "/미클",
         "/상점",
         "/완전삭제",
@@ -246,6 +249,9 @@ def is_enabled_operator_command(text):
         "/족보분류 ",
         "/주의유저추가 ",
         "/주의유저삭제",
+        "/블랙리스트 ",
+        "/블랙추가 ",
+        "/블랙삭제",
         "/삭제복구",
         "/마디수 ",
         "/전체마디수 ",
@@ -2425,6 +2431,10 @@ def operator_commands_text():
 /주의유저
 /주의유저추가 닉네임 메모
 /주의유저삭제 번호
+/블랙리스트
+/블랙리스트 닉네임
+/블랙추가 닉네임 년생 지역 대분류 / 사유
+/블랙삭제 번호
 
 ━━━━━━━━━━
 📖 족보
@@ -2498,6 +2508,10 @@ def all_commands_text():
 /주의유저
 /주의유저추가 닉네임 메모
 /주의유저삭제 번호
+/블랙리스트
+/블랙리스트 닉네임
+/블랙추가 닉네임 년생 지역 대분류 / 사유
+/블랙삭제 번호
 
 📖 족보
 /족보입력
@@ -11052,6 +11066,186 @@ def blacklist_match_warning_text(parsed, profile_name, user_name, source_id, mat
     return "\n".join(lines)
 
 
+def blacklist_entry_name_key(value):
+    return re.sub(r"[^0-9A-Za-z가-힣]+", "", str(value or ""))
+
+
+def blacklist_aliases(value):
+    aliases = []
+    seen = set()
+    for alias in re.split(r"[,/，、]+", str(value or "")):
+        alias = alias.strip()
+        key = blacklist_entry_name_key(alias)
+        if len(key) < 2 or key in seen:
+            continue
+        seen.add(key)
+        aliases.append(alias)
+    return aliases
+
+
+def blacklist_entries_text(arg=""):
+    raw = str(arg or "").strip()
+    params = []
+    where = "WHERE COALESCE(is_active, 1) = 1"
+    title = "🚨 블랙리스트 목록"
+
+    if raw:
+        key = blacklist_entry_name_key(raw)
+        year = normalize_code666_birth_year(raw)
+        like = f"%{raw}%"
+        clauses = ["nickname LIKE ?", "region LIKE ?", "section LIKE ?", "reason LIKE ?"]
+        params.extend([like, like, like, like])
+        if key:
+            clauses.append("normalized_name LIKE ?")
+            params.append(f"%{key}%")
+        if year:
+            clauses.append("age_key = ?")
+            params.append(year)
+        where += " AND (" + " OR ".join(clauses) + ")"
+        title = f"🚨 블랙리스트 검색: {raw}"
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute(f"""
+    SELECT id, nickname, age, age_key, region, section, reason, created_at
+    FROM blacklist_entries
+    {where}
+    ORDER BY age_key ASC, normalized_name ASC, id ASC
+    LIMIT 80
+    """, params)
+    rows = cur.fetchall()
+    cur.execute("SELECT COUNT(*) AS c FROM blacklist_entries WHERE COALESCE(is_active, 1) = 1")
+    total = cur.fetchone()["c"]
+    conn.close()
+
+    if not rows:
+        return "🚨 블랙리스트 항목이 없습니다."
+
+    lines = [title, f"전체 활성 항목: {total}개", ""]
+    for row in rows:
+        lines += [
+            f"#{row['id']} {row['nickname']} / {row['age'] or row['age_key']} / {row['region'] or '-'}",
+            f"대분류: {row['section'] or '-'}",
+            f"사유: {row['reason'] or '-'}",
+            "",
+        ]
+    lines += [
+        "추가: /블랙추가 닉네임 년생 지역 대분류 / 사유",
+        "검색: /블랙리스트 닉네임 또는 /블랙리스트 년생",
+        "삭제: /블랙삭제 번호1 번호2 ...",
+    ]
+    return "\n".join(lines)
+
+
+def add_blacklist_entry(arg, added_by=""):
+    raw = str(arg or "").strip()
+    parts = raw.split(maxsplit=3)
+    if len(parts) < 4:
+        return (
+            "사용법: /블랙추가 닉네임 년생 지역 대분류 / 사유\n\n"
+            "예시: /블랙추가 로건/지옥 01 대구 블랙리스트 / 과도한 집착"
+        )
+
+    nickname_raw, age_raw, region, detail = parts
+    aliases = blacklist_aliases(nickname_raw)
+    age_key = normalize_code666_birth_year(age_raw)
+    if not aliases or not age_key:
+        return "닉네임과 나이/년생을 다시 확인해 주세요."
+
+    if "/" in detail:
+        section, reason = detail.split("/", 1)
+    else:
+        section, reason = detail, ""
+    section = section.strip() or "직접추가"
+    reason = reason.strip() or "-"
+
+    conn = db()
+    cur = conn.cursor()
+    added = []
+    for nickname in aliases:
+        normalized_name = blacklist_entry_name_key(nickname)
+        cur.execute("""
+        INSERT INTO blacklist_entries (
+            nickname, normalized_name, age, age_key, region, section, reason, created_at, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT(normalized_name, age_key)
+        DO UPDATE SET
+            nickname = excluded.nickname,
+            age = excluded.age,
+            region = excluded.region,
+            section = excluded.section,
+            reason = excluded.reason,
+            created_at = excluded.created_at,
+            is_active = 1
+        """, (
+            nickname,
+            normalized_name,
+            age_key,
+            age_key,
+            region.strip() or "-",
+            section,
+            reason,
+            now_str(),
+        ))
+        added.append(f"- {nickname} / {age_key} / {region.strip() or '-'}")
+    conn.commit()
+    conn.close()
+
+    lines = ["🚨 블랙리스트 등록 완료", ""]
+    lines.extend(added)
+    lines += ["", f"대분류: {section}", f"사유: {reason}"]
+    return "\n".join(lines)
+
+
+def delete_blacklist_entries(arg):
+    raw = str(arg or "").strip()
+    numbers = []
+    for token in re.split(r"[\s,]+", raw):
+        token = token.strip().lstrip("#")
+        if not token:
+            continue
+        if not token.isdigit():
+            return "사용법: /블랙삭제 번호1 번호2 ..."
+        numbers.append(token)
+    if not numbers:
+        return "사용법: /블랙삭제 번호1 번호2 ..."
+
+    ordered_numbers = []
+    seen = set()
+    for number in numbers:
+        if number in seen:
+            continue
+        seen.add(number)
+        ordered_numbers.append(number)
+
+    conn = db()
+    cur = conn.cursor()
+    deleted = []
+    missing = []
+    for number in ordered_numbers:
+        cur.execute(
+            "SELECT id, nickname, age, region FROM blacklist_entries WHERE id = ? AND COALESCE(is_active, 1) = 1",
+            (number,)
+        )
+        row = cur.fetchone()
+        if not row:
+            missing.append(number)
+            continue
+        cur.execute("UPDATE blacklist_entries SET is_active = 0 WHERE id = ?", (row["id"],))
+        deleted.append(dict(row))
+    conn.commit()
+    conn.close()
+
+    if not deleted:
+        return "삭제할 블랙리스트 항목을 찾지 못했어요."
+
+    lines = ["✅ 블랙리스트 삭제 완료", ""]
+    lines.extend([f"- #{row['id']} {row['nickname']} / {row['age']} / {row['region'] or '-'}" for row in deleted])
+    if missing:
+        lines += ["", "찾지 못한 번호", ", ".join(f"#{number}" for number in missing)]
+    return "\n".join(lines)
+
+
 def genealogy_update_source_id():
     return str(get_bot_setting("genealogy_update_source_id", "") or "").strip()
 
@@ -14486,6 +14680,30 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
         reply_many(event.reply_token, split_text_messages(caution_users_text()))
+        return
+
+    if text == "/블랙리스트" or text.startswith("/블랙리스트 "):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        raw = text.replace("/블랙리스트", "", 1).strip()
+        reply_many(event.reply_token, split_text_messages(blacklist_entries_text(raw)))
+        return
+
+    if text == "/블랙추가" or text.startswith("/블랙추가 "):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        raw = text.replace("/블랙추가", "", 1).strip()
+        reply_many(event.reply_token, split_text_messages(add_blacklist_entry(raw, user_name)))
+        return
+
+    if text == "/블랙삭제" or text.startswith("/블랙삭제"):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        raw = text.replace("/블랙삭제", "", 1).strip()
+        reply_many(event.reply_token, split_text_messages(delete_blacklist_entries(raw)))
         return
 
     if text == "/주의유저추가" or text.startswith("/주의유저추가 "):
