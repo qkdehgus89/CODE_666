@@ -132,7 +132,7 @@ JOKBO_RELATION_PENDING = {}
 # 권한
 # =========================
 def is_operator_room(source_id):
-    return bool(source_id and source_id in ADMIN_SOURCE_IDS)
+    return bool(source_id and source_id in operator_source_ids())
 
 
 def is_admin(user_id):
@@ -152,7 +152,7 @@ def is_operator_command(text):
         return False
 
     exact_commands = {
-        "/운영명령어", "/전체명령어", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저", "/전체유저검사",
+        "/운영명령어", "/전체명령어", "/운영방", "/운영방해제", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저", "/전체유저검사",
         "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/인증방", "/블랙리스트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/족보삭제", "/족보수정", "/족보분류",
         "/주의유저",
@@ -197,6 +197,8 @@ def is_enabled_operator_command(text):
     exact_commands = {
         "/운영명령어",
         "/전체명령어",
+        "/운영방",
+        "/운영방해제",
         "/전체유저",
         "/전체유저검사",
         "/족보입력",
@@ -310,7 +312,7 @@ def count_source_ids():
         ids.add(COUNT_SOURCE_ID)
 
     # 운영진방 여러 개 카운트 지원
-    for admin_source_id in ADMIN_SOURCE_IDS:
+    for admin_source_id in operator_source_ids():
         ids.add(admin_source_id)
 
     for blacklist_source_id in blacklist_source_ids():
@@ -1061,6 +1063,16 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS admin_rooms (
+        source_id TEXT PRIMARY KEY,
+        source_name TEXT,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS genealogy_profiles (
         user_id TEXT PRIMARY KEY,
         user_name TEXT NOT NULL,
@@ -1738,7 +1750,7 @@ def room_info_text(event, source_id, user_id, user_name):
     labels = []
     if source_id == COUNT_SOURCE_ID:
         labels.append("COUNT_SOURCE_ID")
-    if source_id in ADMIN_SOURCE_IDS:
+    if source_id in operator_source_ids():
         labels.append("ADMIN_SOURCE_ID")
     if source_id in auth_source_ids():
         labels.append("AUTH_SOURCE_ID")
@@ -2055,7 +2067,7 @@ def push_or_reply_private_info(
     공개방/그룹/룸에서는 Push를 쓰지 않고 1:1 직접 입력을 안내.
     allow_admin_room=True이면 운영방에서는 현재 대화에 바로 reply.
     """
-    if is_private_chat(event) or (allow_admin_room and get_source_id(event) in ADMIN_SOURCE_IDS):
+    if is_private_chat(event) or (allow_admin_room and is_operator_room(get_source_id(event))):
         reply_many(event.reply_token, split_text_messages(text_value))
         return
 
@@ -2295,6 +2307,8 @@ def operator_commands_text():
     return """🔒 운영방 전용 명령어
 
 /전체명령어
+/운영방
+/운영방해제
 
 ━━━━━━━━━━
 👤 유저 관리
@@ -2368,6 +2382,8 @@ def all_commands_text():
 ━━━━━━━━━━
 /운영명령어
 /전체명령어
+/운영방
+/운영방해제
 
 👤 유저 관리
 /전체유저
@@ -10758,6 +10774,82 @@ def set_bot_setting(key, value, updated_by=""):
     conn.close()
 
 
+def admin_room_rows():
+    try:
+        conn = db()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT source_id, source_name, created_by, created_at
+        FROM admin_rooms
+        WHERE COALESCE(is_active, 1) = 1
+        ORDER BY created_at ASC
+        """)
+        rows = [dict(row) for row in cur.fetchall()]
+        conn.close()
+        return rows
+    except Exception as e:
+        log_error("ADMIN_ROOM_ROWS_ERROR", e)
+        return []
+
+
+def operator_source_ids():
+    ids = set(ADMIN_SOURCE_IDS)
+    for row in admin_room_rows():
+        source_id = str(row.get("source_id") or "").strip()
+        if source_id:
+            ids.add(source_id)
+    return ids
+
+
+def set_operator_room(source_id, user_name=""):
+    if not source_id or source_id == "NO_SOURCE_ID":
+        return "방 ID를 확인하지 못했어요. 운영방으로 쓸 방에서 다시 입력해 주세요."
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT INTO admin_rooms (
+        source_id, source_name, created_by, created_at, is_active
+    ) VALUES (?, ?, ?, ?, 1)
+    ON CONFLICT(source_id)
+    DO UPDATE SET
+        source_name = excluded.source_name,
+        created_by = excluded.created_by,
+        created_at = excluded.created_at,
+        is_active = 1
+    """, (source_id, "운영방", user_name, now_str()))
+    conn.commit()
+    conn.close()
+
+    return (
+        "✅ 운영방 설정 완료\n\n"
+        "이제 이 방에서는 운영 명령어를 사용할 수 있습니다.\n"
+        f"방 ID: {source_id}"
+    )
+
+
+def unset_operator_room(source_id):
+    if not source_id or source_id == "NO_SOURCE_ID":
+        return "방 ID를 확인하지 못했어요. 해제할 방에서 다시 입력해 주세요."
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("UPDATE admin_rooms SET is_active = 0 WHERE source_id = ?", (source_id,))
+    changed = cur.rowcount
+    conn.commit()
+    conn.close()
+
+    if source_id in ADMIN_SOURCE_IDS:
+        return (
+            "⚠️ 운영방 해제 제한\n\n"
+            "이 방은 Railway 환경변수 ADMIN_SOURCE_ID에 등록되어 있어 DB에서만 해제할 수 없어요.\n"
+            "Railway 변수에서 제거해야 완전히 해제됩니다."
+        )
+    if changed:
+        return "✅ 운영방 해제 완료\n\n이 방은 더 이상 DB 등록 운영방이 아닙니다."
+    return "이미 DB 등록 운영방이 아니에요."
+
+
 def blacklist_source_ids():
     ids = set(BLACKLIST_SOURCE_IDS)
     saved_source_id = str(get_bot_setting("blacklist_source_id", "") or "").strip()
@@ -13663,6 +13755,14 @@ def handle(event):
         reply(event.reply_token, room_info_text(event, source_id, user_id, user_name))
         return
 
+    if text == "/운영방":
+        reply(event.reply_token, set_operator_room(source_id, user_name))
+        return
+
+    if text == "/운영방해제":
+        reply(event.reply_token, unset_operator_room(source_id))
+        return
+
     if text == "/족보업데이트방":
         reply(event.reply_token, set_genealogy_update_room(source_id, user_name))
         return
@@ -14968,7 +15068,7 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
 
-        if source_id not in ADMIN_SOURCE_IDS:
+        if not is_operator_room(source_id):
             reply(event.reply_token, "⛔ 운영방에서만 사용 가능합니다.")
             return
 
