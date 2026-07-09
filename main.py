@@ -70,7 +70,7 @@ PORT = int(os.getenv("PORT", "5000"))
 
 MALE_LIMIT = int(os.getenv("MALE_LIMIT", "10"))
 FEMALE_LIMIT = int(os.getenv("FEMALE_LIMIT", "10"))
-WARNING_LIMIT = int(os.getenv("WARNING_LIMIT", "10"))
+WARNING_LIMIT = int(os.getenv("WARNING_LIMIT", "20"))
 CURRENCY_NAME = os.getenv("CURRENCY_NAME", "코인").strip()
 BOT_VERSION = "sns-flowerbot-v10.6"
 BOT_USER_ID = os.getenv("BOT_USER_ID", "").strip()
