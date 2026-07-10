@@ -32,12 +32,404 @@
     "reason": "인증도중 연애세포 신세한탄"
   },
   {
+    "gender": "남",
+    "nickname": "로건",
+    "age": "01",
+    "region": "대구",
+    "category": "블랙리스트",
+    "reason": "과도한 집착, 조건만남하자고함, 여자들에게 주인님거림"
+  },
+  {
+    "gender": "남",
+    "nickname": "지옥",
+    "age": "01",
+    "region": "대구",
+    "category": "블랙리스트",
+    "reason": "과도한 집착, 조건만남하자고함, 여자들에게 주인님거림"
+  },
+  {
+    "gender": "남",
+    "nickname": "막내",
+    "age": "02",
+    "region": "용인",
+    "category": "블랙리스트",
+    "reason": "집착"
+  },
+  {
+    "gender": "남",
+    "nickname": "사슬",
+    "age": "02",
+    "region": "군산",
+    "category": "블랙리스트",
+    "reason": "인유두종 16번감염,본명 황시현,뒷방 끼리끼리"
+  },
+  {
+    "gender": "남",
+    "nickname": "쿠바",
+    "age": "02",
+    "region": "군산",
+    "category": "블랙리스트",
+    "reason": "인유두종 16번감염,본명 황시현,뒷방 끼리끼리"
+  },
+  {
+    "gender": "남",
+    "nickname": "이타",
+    "age": "03",
+    "region": "서울",
+    "category": "블랙리스트",
+    "reason": "집착"
+  },
+  {
+    "gender": "남",
+    "nickname": "라쿤",
+    "age": "88",
+    "region": "대전",
+    "category": "블랙리스트",
+    "reason": "집착"
+  },
+  {
+    "gender": "남",
+    "nickname": "노포",
+    "age": "89",
+    "region": "세종,대전",
+    "category": "블랙리스트",
+    "reason": "방폭"
+  },
+  {
+    "gender": "남",
+    "nickname": "스톤",
+    "age": "90",
+    "region": "경기",
+    "category": "블랙리스트",
+    "reason": "업소사장"
+  },
+  {
+    "gender": "남",
+    "nickname": "포카",
+    "age": "90",
+    "region": "광주",
+    "category": "블랙리스트",
+    "reason": "집착"
+  },
+  {
+    "gender": "남",
+    "nickname": "구름",
+    "age": "91",
+    "region": "안산",
+    "category": "블랙리스트",
+    "reason": "집착남,말편히해요"
+  },
+  {
+    "gender": "남",
+    "nickname": "김밥",
+    "age": "91",
+    "region": "용인",
+    "category": "블랙리스트",
+    "reason": "집착,로진,인성논란"
+  },
+  {
+    "gender": "남",
+    "nickname": "라쿤",
+    "age": "91",
+    "region": "용인",
+    "category": "블랙리스트",
+    "reason": "집착,로진,인성논란"
+  },
+  {
+    "gender": "남",
+    "nickname": "망고",
+    "age": "91",
+    "region": "안산",
+    "category": "블랙리스트",
+    "reason": "집착남,말편히해요"
+  },
+  {
+    "gender": "남",
+    "nickname": "블랙",
+    "age": "91",
+    "region": "창원",
+    "category": "블랙리스트",
+    "reason": "로진,찡찡"
+  },
+  {
+    "gender": "남",
+    "nickname": "블루",
+    "age": "91",
+    "region": "안산",
+    "category": "블랙리스트",
+    "reason": "집착남,말편히해요"
+  },
+  {
+    "gender": "남",
+    "nickname": "테리",
+    "age": "91",
+    "region": "안산",
+    "category": "블랙리스트",
+    "reason": "집착남,말편히해요"
+  },
+  {
+    "gender": "남",
+    "nickname": "브테",
+    "age": "92",
+    "region": "서울",
+    "category": "블랙리스트",
+    "reason": "헤르페스,유명함"
+  },
+  {
+    "gender": "남",
+    "nickname": "숭이",
+    "age": "92",
+    "region": "원주",
+    "category": "블랙리스트",
+    "reason": "폭언,무차별갠라"
+  },
+  {
+    "gender": "남",
+    "nickname": "욱이",
+    "age": "93",
+    "region": "동탄",
+    "category": "블랙리스트",
+    "reason": "헤르페스1형"
+  },
+  {
+    "gender": "남",
+    "nickname": "하루",
+    "age": "93",
+    "region": "서울",
+    "category": "블랙리스트",
+    "reason": "뒷말, 벙때 상대방 신분증 몰래 촬영 및 유포"
+  },
+  {
+    "gender": "남",
+    "nickname": "짱구",
+    "age": "94",
+    "region": "대구,구미",
+    "category": "블랙리스트",
+    "reason": "방폭"
+  },
+  {
+    "gender": "남",
+    "nickname": "따따",
+    "age": "95",
+    "region": "서울",
+    "category": "블랙리스트",
+    "reason": "로진"
+  },
+  {
+    "gender": "남",
+    "nickname": "식도",
+    "age": "95",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "집착"
+  },
+  {
+    "gender": "남",
+    "nickname": "영차",
+    "age": "95",
+    "region": "순천",
+    "category": "블랙리스트",
+    "reason": "집착"
+  },
+  {
+    "gender": "남",
+    "nickname": "미미",
+    "age": "96",
+    "region": "광주",
+    "category": "블랙리스트",
+    "reason": "사진저장"
+  },
+  {
+    "gender": "남",
+    "nickname": "포빅",
+    "age": "96",
+    "region": "경기광주",
+    "category": "블랙리스트",
+    "reason": "몰벙"
+  },
+  {
+    "gender": "남",
+    "nickname": "닥닥",
+    "age": "97",
+    "region": "대구",
+    "category": "블랙리스트",
+    "reason": "영통에서 딸치고 싶어함"
+  },
+  {
+    "gender": "남",
+    "nickname": "누누",
+    "age": "98",
+    "region": "마포구",
+    "category": "블랙리스트",
+    "reason": "방폭"
+  },
+  {
+    "gender": "남",
+    "nickname": "호야",
+    "age": "98",
+    "region": "서울",
+    "category": "블랙리스트",
+    "reason": "방 관련 일들을 타방사람에게 제보"
+  },
+  {
+    "gender": "남",
+    "nickname": "경이",
+    "age": "99",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "나이속임,지역속임"
+  },
+  {
+    "gender": "남",
+    "nickname": "관우",
+    "age": "99",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "나이속임,지역속임"
+  },
+  {
+    "gender": "남",
+    "nickname": "롱구",
+    "age": "99",
+    "region": "화성",
+    "category": "블랙리스트",
+    "reason": "장애가있음,"
+  },
+  {
+    "gender": "남",
+    "nickname": "블랙",
+    "age": "99",
+    "region": "화성",
+    "category": "블랙리스트",
+    "reason": "장애가있음,"
+  },
+  {
+    "gender": "남",
+    "nickname": "엄격",
+    "age": "99",
+    "region": "화성",
+    "category": "블랙리스트",
+    "reason": "장애가있음,"
+  },
+  {
+    "gender": "남",
+    "nickname": "찬이",
+    "age": "99",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "도용,로진"
+  },
+  {
+    "gender": "남",
+    "nickname": "로이",
+    "age": "모름",
+    "region": "용인",
+    "category": "블랙리스트",
+    "reason": "성격파탄"
+  },
+  {
     "gender": "모름",
     "nickname": "무야호",
     "age": "00",
     "region": "대구",
     "category": "블랙리스트",
     "reason": "방인원들 추방시킴"
+  },
+  {
+    "gender": "모름",
+    "nickname": "삐약",
+    "age": "03",
+    "region": "서울",
+    "category": "블랙리스트",
+    "reason": "성병 보균상태로 섹벙함"
+  },
+  {
+    "gender": "모름",
+    "nickname": "엌엌",
+    "age": "87",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "상습이탈"
+  },
+  {
+    "gender": "모름",
+    "nickname": "주임",
+    "age": "87",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "상습이탈"
+  },
+  {
+    "gender": "모름",
+    "nickname": "부기",
+    "age": "88",
+    "region": "대구",
+    "category": "블랙리스트",
+    "reason": "벙비먹튀"
+  },
+  {
+    "gender": "모름",
+    "nickname": "뽀뽀",
+    "age": "91",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "로맨스진상, 주변사람 괴롭힘"
+  },
+  {
+    "gender": "모름",
+    "nickname": "유댕",
+    "age": "92",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "가스라이팅,무례함"
+  },
+  {
+    "gender": "모름",
+    "nickname": "라닝",
+    "age": "95",
+    "region": "인천",
+    "category": "블랙리스트",
+    "reason": "사진도용"
+  },
+  {
+    "gender": "모름",
+    "nickname": "레빗",
+    "age": "96",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "다발적 갠라와 거짓말"
+  },
+  {
+    "gender": "모름",
+    "nickname": "젤리",
+    "age": "96",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "방폭협박, 인성문제"
+  },
+  {
+    "gender": "모름",
+    "nickname": "푸딩",
+    "age": "97",
+    "region": "구미",
+    "category": "블랙리스트",
+    "reason": "방 정보 유출"
+  },
+  {
+    "gender": "모름",
+    "nickname": "위너",
+    "age": "98",
+    "region": "인천",
+    "category": "블랙리스트",
+    "reason": "신생방 오픈잠입"
+  },
+  {
+    "gender": "모름",
+    "nickname": "유하",
+    "age": "98",
+    "region": "모름",
+    "category": "블랙리스트",
+    "reason": "방폭러,시비걸고다님"
   },
   {
     "gender": "여",
@@ -80,22 +472,6 @@
     "reason": "몰벙,몸사진 도용"
   },
   {
-    "gender": "남",
-    "nickname": "로건",
-    "age": "01",
-    "region": "대구",
-    "category": "블랙리스트",
-    "reason": "과도한 집착, 조건만남하자고함, 여자들에게 주인님거림"
-  },
-  {
-    "gender": "남",
-    "nickname": "지옥",
-    "age": "01",
-    "region": "대구",
-    "category": "블랙리스트",
-    "reason": "과도한 집착, 조건만남하자고함, 여자들에게 주인님거림"
-  },
-  {
     "gender": "여",
     "nickname": "요뜨",
     "age": "01",
@@ -110,30 +486,6 @@
     "region": "모름",
     "category": "블랙리스트",
     "reason": "돈받고 미클시켜줌"
-  },
-  {
-    "gender": "남",
-    "nickname": "막내",
-    "age": "02",
-    "region": "용인",
-    "category": "블랙리스트",
-    "reason": "집착"
-  },
-  {
-    "gender": "남",
-    "nickname": "사슬",
-    "age": "02",
-    "region": "군산",
-    "category": "블랙리스트",
-    "reason": "인유두종 16번감염,본명 황시현,뒷방 끼리끼리"
-  },
-  {
-    "gender": "남",
-    "nickname": "쿠바",
-    "age": "02",
-    "region": "군산",
-    "category": "블랙리스트",
-    "reason": "인유두종 16번감염,본명 황시현,뒷방 끼리끼리"
   },
   {
     "gender": "여",
@@ -206,22 +558,6 @@
     "region": "안산",
     "category": "블랙리스트",
     "reason": "헤르페스"
-  },
-  {
-    "gender": "남",
-    "nickname": "이타",
-    "age": "03",
-    "region": "서울",
-    "category": "블랙리스트",
-    "reason": "집착"
-  },
-  {
-    "gender": "모름",
-    "nickname": "삐약",
-    "age": "03",
-    "region": "서울",
-    "category": "블랙리스트",
-    "reason": "성병 보균상태로 섹벙함"
   },
   {
     "gender": "여",
@@ -304,38 +640,6 @@
     "reason": "사람빼감"
   },
   {
-    "gender": "모름",
-    "nickname": "엌엌.주임",
-    "age": "87",
-    "region": "모름",
-    "category": "블랙리스트",
-    "reason": "상습이탈"
-  },
-  {
-    "gender": "남",
-    "nickname": "라쿤",
-    "age": "88",
-    "region": "대전",
-    "category": "블랙리스트",
-    "reason": "집착"
-  },
-  {
-    "gender": "모름",
-    "nickname": "부기",
-    "age": "88",
-    "region": "대구",
-    "category": "블랙리스트",
-    "reason": "벙비먹튀"
-  },
-  {
-    "gender": "남",
-    "nickname": "노포",
-    "age": "89",
-    "region": "세종,대전",
-    "category": "블랙리스트",
-    "reason": "방폭"
-  },
-  {
     "gender": "여",
     "nickname": "셀리",
     "age": "89",
@@ -374,22 +678,6 @@
     "region": "대전",
     "category": "블랙리스트",
     "reason": "로진,집착,벙비먹튀"
-  },
-  {
-    "gender": "남",
-    "nickname": "스톤",
-    "age": "90",
-    "region": "경기",
-    "category": "블랙리스트",
-    "reason": "업소사장"
-  },
-  {
-    "gender": "남",
-    "nickname": "포카",
-    "age": "90",
-    "region": "광주",
-    "category": "블랙리스트",
-    "reason": "집착"
   },
   {
     "gender": "여",
@@ -432,70 +720,6 @@
     "reason": "룰숙지아예못하고 자기할만만 개쩜"
   },
   {
-    "gender": "남",
-    "nickname": "구름",
-    "age": "91",
-    "region": "안산",
-    "category": "블랙리스트",
-    "reason": "집착남,말편히해요"
-  },
-  {
-    "gender": "남",
-    "nickname": "김밥",
-    "age": "91",
-    "region": "용인",
-    "category": "블랙리스트",
-    "reason": "집착,로진,인성논란"
-  },
-  {
-    "gender": "남",
-    "nickname": "라쿤",
-    "age": "91",
-    "region": "용인",
-    "category": "블랙리스트",
-    "reason": "집착,로진,인성논란"
-  },
-  {
-    "gender": "남",
-    "nickname": "망고",
-    "age": "91",
-    "region": "안산",
-    "category": "블랙리스트",
-    "reason": "집착남,말편히해요"
-  },
-  {
-    "gender": "남",
-    "nickname": "블랙",
-    "age": "91",
-    "region": "창원",
-    "category": "블랙리스트",
-    "reason": "로진,찡찡"
-  },
-  {
-    "gender": "남",
-    "nickname": "블루",
-    "age": "91",
-    "region": "안산",
-    "category": "블랙리스트",
-    "reason": "집착남,말편히해요"
-  },
-  {
-    "gender": "남",
-    "nickname": "테리",
-    "age": "91",
-    "region": "안산",
-    "category": "블랙리스트",
-    "reason": "집착남,말편히해요"
-  },
-  {
-    "gender": "모름",
-    "nickname": "뽀뽀",
-    "age": "91",
-    "region": "모름",
-    "category": "블랙리스트",
-    "reason": "로맨스진상, 주변사람 괴롭힘"
-  },
-  {
     "gender": "여",
     "nickname": "셀리",
     "age": "91",
@@ -526,54 +750,6 @@
     "region": "모름",
     "category": "블랙리스트",
     "reason": "사진도용,남자들한테 돈뜯고다님"
-  },
-  {
-    "gender": "남",
-    "nickname": "브테",
-    "age": "92",
-    "region": "서울",
-    "category": "블랙리스트",
-    "reason": "헤르페스,유명함"
-  },
-  {
-    "gender": "남",
-    "nickname": "숭이",
-    "age": "92",
-    "region": "원주",
-    "category": "블랙리스트",
-    "reason": "폭언,무차별갠라"
-  },
-  {
-    "gender": "모름",
-    "nickname": "유댕",
-    "age": "92",
-    "region": "모름",
-    "category": "블랙리스트",
-    "reason": "가스라이팅,무례함"
-  },
-  {
-    "gender": "남",
-    "nickname": "욱이",
-    "age": "93",
-    "region": "동탄",
-    "category": "블랙리스트",
-    "reason": "헤르페스1형"
-  },
-  {
-    "gender": "남",
-    "nickname": "하루",
-    "age": "93",
-    "region": "서울",
-    "category": "블랙리스트",
-    "reason": "뒷말, 벙때 상대방 신분증 몰래 촬영 및 유포"
-  },
-  {
-    "gender": "남",
-    "nickname": "짱구",
-    "age": "94",
-    "region": "대구,구미",
-    "category": "블랙리스트",
-    "reason": "방폭"
   },
   {
     "gender": "여",
@@ -608,38 +784,6 @@
     "reason": "로진,허언증,몰벙"
   },
   {
-    "gender": "남",
-    "nickname": "따따",
-    "age": "95",
-    "region": "서울",
-    "category": "블랙리스트",
-    "reason": "로진"
-  },
-  {
-    "gender": "남",
-    "nickname": "식도",
-    "age": "95",
-    "region": "모름",
-    "category": "블랙리스트",
-    "reason": "집착"
-  },
-  {
-    "gender": "남",
-    "nickname": "영차",
-    "age": "95",
-    "region": "순천",
-    "category": "블랙리스트",
-    "reason": "집착"
-  },
-  {
-    "gender": "모름",
-    "nickname": "라닝",
-    "age": "95",
-    "region": "인천",
-    "category": "블랙리스트",
-    "reason": "사진도용"
-  },
-  {
     "gender": "여",
     "nickname": "체리",
     "age": "95",
@@ -662,38 +806,6 @@
     "region": "천안",
     "category": "블랙리스트",
     "reason": "돌싱,집착,벙비먹튀,벙할때 자녀를데려오고 방치함"
-  },
-  {
-    "gender": "남",
-    "nickname": "미미",
-    "age": "96",
-    "region": "광주",
-    "category": "블랙리스트",
-    "reason": "사진저장"
-  },
-  {
-    "gender": "남",
-    "nickname": "포빅",
-    "age": "96",
-    "region": "경기광주",
-    "category": "블랙리스트",
-    "reason": "몰벙"
-  },
-  {
-    "gender": "모름",
-    "nickname": "레빗",
-    "age": "96",
-    "region": "모름",
-    "category": "블랙리스트",
-    "reason": "다발적 갠라와 거짓말"
-  },
-  {
-    "gender": "모름",
-    "nickname": "젤리",
-    "age": "96",
-    "region": "모름",
-    "category": "블랙리스트",
-    "reason": "방폭협박, 인성문제"
   },
   {
     "gender": "여",
@@ -726,22 +838,6 @@
     "region": "평택",
     "category": "블랙리스트",
     "reason": "방폭러"
-  },
-  {
-    "gender": "남",
-    "nickname": "닥닥",
-    "age": "97",
-    "region": "대구",
-    "category": "블랙리스트",
-    "reason": "영통에서 딸치고 싶어함"
-  },
-  {
-    "gender": "모름",
-    "nickname": "푸딩",
-    "age": "97",
-    "region": "구미",
-    "category": "블랙리스트",
-    "reason": "방 정보 유출"
   },
   {
     "gender": "여",
@@ -816,38 +912,6 @@
     "reason": "통수치기전문"
   },
   {
-    "gender": "남",
-    "nickname": "누누",
-    "age": "98",
-    "region": "마포구",
-    "category": "블랙리스트",
-    "reason": "방폭"
-  },
-  {
-    "gender": "남",
-    "nickname": "호야",
-    "age": "98",
-    "region": "서울",
-    "category": "블랙리스트",
-    "reason": "방 관련 일들을 타방사람에게 제보"
-  },
-  {
-    "gender": "모름",
-    "nickname": "위너",
-    "age": "98",
-    "region": "인천",
-    "category": "블랙리스트",
-    "reason": "신생방 오픈잠입"
-  },
-  {
-    "gender": "모름",
-    "nickname": "유하",
-    "age": "98",
-    "region": "모름",
-    "category": "블랙리스트",
-    "reason": "방폭러,시비걸고다님"
-  },
-  {
     "gender": "여",
     "nickname": "다혜",
     "age": "98",
@@ -888,54 +952,6 @@
     "reason": "방폭러"
   },
   {
-    "gender": "남",
-    "nickname": "경이",
-    "age": "99",
-    "region": "모름",
-    "category": "블랙리스트",
-    "reason": "나이속임,지역속임"
-  },
-  {
-    "gender": "남",
-    "nickname": "관우",
-    "age": "99",
-    "region": "모름",
-    "category": "블랙리스트",
-    "reason": "나이속임,지역속임"
-  },
-  {
-    "gender": "남",
-    "nickname": "롱구",
-    "age": "99",
-    "region": "화성",
-    "category": "블랙리스트",
-    "reason": "장애가있음,"
-  },
-  {
-    "gender": "남",
-    "nickname": "블랙",
-    "age": "99",
-    "region": "화성",
-    "category": "블랙리스트",
-    "reason": "장애가있음,"
-  },
-  {
-    "gender": "남",
-    "nickname": "엄격",
-    "age": "99",
-    "region": "화성",
-    "category": "블랙리스트",
-    "reason": "장애가있음,"
-  },
-  {
-    "gender": "남",
-    "nickname": "찬이",
-    "age": "99",
-    "region": "모름",
-    "category": "블랙리스트",
-    "reason": "도용,로진"
-  },
-  {
     "gender": "여",
     "nickname": "루피",
     "age": "99",
@@ -974,21 +990,5 @@
     "region": "남양주",
     "category": "블랙리스트",
     "reason": "징징 , 탈주 , 미클전용, 폭언, 이간질, 공창분위기 저해"
-  },
-  {
-    "gender": "성별",
-    "nickname": "닉네임",
-    "age": "나이",
-    "region": "지역",
-    "category": "블랙리스트",
-    "reason": "사유"
-  },
-  {
-    "gender": "남",
-    "nickname": "로이",
-    "age": "모름",
-    "region": "용인",
-    "category": "블랙리스트",
-    "reason": "성격파탄"
   }
 ]

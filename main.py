@@ -1730,7 +1730,7 @@ def init_db():
             (now_str(),)
         )
 
-    cur.execute("SELECT value FROM system_flags WHERE key = 'code666_blacklist_seed_20260710_v2'")
+    cur.execute("SELECT value FROM system_flags WHERE key = 'code666_blacklist_seed_20260710_v3'")
     blacklist_seed_done = cur.fetchone()
     if not blacklist_seed_done:
         created_at = now_str()
@@ -1803,7 +1803,7 @@ def init_db():
             ))
 
         cur.execute(
-            "INSERT INTO system_flags (key, value) VALUES ('code666_blacklist_seed_20260710_v2', ?)",
+            "INSERT INTO system_flags (key, value) VALUES ('code666_blacklist_seed_20260710_v3', ?)",
             (created_at,)
         )
 
