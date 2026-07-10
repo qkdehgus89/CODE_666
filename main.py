@@ -1236,6 +1236,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nickname TEXT NOT NULL,
         normalized_name TEXT NOT NULL,
+        gender TEXT,
         age TEXT NOT NULL,
         age_key TEXT NOT NULL,
         region TEXT,
@@ -1253,6 +1254,8 @@ def init_db():
 
     cur.execute("PRAGMA table_info(blacklist_entries)")
     blacklist_entry_cols = {row["name"] for row in cur.fetchall()}
+    if "gender" not in blacklist_entry_cols:
+        cur.execute("ALTER TABLE blacklist_entries ADD COLUMN gender TEXT")
     if "region" not in blacklist_entry_cols:
         cur.execute("ALTER TABLE blacklist_entries ADD COLUMN region TEXT")
 
@@ -1727,7 +1730,7 @@ def init_db():
             (now_str(),)
         )
 
-    cur.execute("SELECT value FROM system_flags WHERE key = 'code666_blacklist_seed_20260707_v4'")
+    cur.execute("SELECT value FROM system_flags WHERE key = 'code666_blacklist_seed_20260710_v2'")
     blacklist_seed_done = cur.fetchone()
     if not blacklist_seed_done:
         created_at = now_str()
@@ -1769,17 +1772,19 @@ def init_db():
             region = str(row.get("region") or "").strip()
             normalized_name = blacklist_seed_norm(nickname)
             age_key = age
+            gender = str(row.get("gender") or "").strip()
             reason = str(row.get("reason") or "").strip()
             section = str(row.get("category") or row.get("section") or "").strip()
             if not nickname or not normalized_name or not age_key or not reason:
                 continue
             cur.execute("""
             INSERT INTO blacklist_entries (
-                nickname, normalized_name, age, age_key, region, section, reason, created_at, is_active
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                nickname, normalized_name, gender, age, age_key, region, section, reason, created_at, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(normalized_name, age_key)
             DO UPDATE SET
                 nickname = excluded.nickname,
+                gender = excluded.gender,
                 age = excluded.age,
                 region = excluded.region,
                 section = excluded.section,
@@ -1788,6 +1793,7 @@ def init_db():
             """, (
                 nickname,
                 normalized_name,
+                gender,
                 age,
                 age_key,
                 region,
@@ -1797,7 +1803,7 @@ def init_db():
             ))
 
         cur.execute(
-            "INSERT INTO system_flags (key, value) VALUES ('code666_blacklist_seed_20260707_v4', ?)",
+            "INSERT INTO system_flags (key, value) VALUES ('code666_blacklist_seed_20260710_v2', ?)",
             (created_at,)
         )
 
@@ -2433,7 +2439,7 @@ def operator_commands_text():
 /주의유저삭제 번호
 /블랙리스트
 /블랙리스트 닉네임
-/블랙추가 닉네임 년생 지역 대분류 / 사유
+/블랙추가 성별 닉네임 년생 지역 사유
 /블랙삭제 번호
 
 ━━━━━━━━━━
@@ -2510,7 +2516,7 @@ def all_commands_text():
 /주의유저삭제 번호
 /블랙리스트
 /블랙리스트 닉네임
-/블랙추가 닉네임 년생 지역 대분류 / 사유
+/블랙추가 성별 닉네임 년생 지역 사유
 /블랙삭제 번호
 
 📖 족보
@@ -11028,7 +11034,7 @@ def find_blacklist_matches(profile_names, age):
     cur = conn.cursor()
     cur.execute(
         f"""
-        SELECT nickname, age, age_key, region, section, reason
+        SELECT nickname, gender, age, age_key, region, section, reason
         FROM blacklist_entries
         WHERE COALESCE(is_active, 1) = 1
           AND age_key = ?
@@ -11058,8 +11064,7 @@ def blacklist_match_warning_text(parsed, profile_name, user_name, source_id, mat
     ]
     for row in matches:
         lines += [
-            f"- {row.get('nickname')} / {row.get('age')} / {row.get('region') or '-'}",
-            f"  대분류: {row.get('section') or '-'}",
+            f"- {row.get('gender') or '-'} / {row.get('nickname')} / {row.get('age')} / {row.get('region') or '-'}",
             f"  사유: {row.get('reason') or '-'}",
         ]
     lines += ["", "이름과 나이가 동시에 맞은 경우입니다. 최종 확인 후 조치해 주세요."]
@@ -11107,7 +11112,7 @@ def blacklist_entries_text(arg=""):
     conn = db()
     cur = conn.cursor()
     cur.execute(f"""
-    SELECT id, nickname, age, age_key, region, section, reason, created_at
+    SELECT id, nickname, gender, age, age_key, region, section, reason, created_at
     FROM blacklist_entries
     {where}
     ORDER BY age_key ASC, normalized_name ASC, id ASC
@@ -11124,13 +11129,12 @@ def blacklist_entries_text(arg=""):
     lines = [title, f"전체 활성 항목: {total}개", ""]
     for row in rows:
         lines += [
-            f"#{row['id']} {row['nickname']} / {row['age'] or row['age_key']} / {row['region'] or '-'}",
-            f"대분류: {row['section'] or '-'}",
+            f"#{row['id']} {row['gender'] or '-'} / {row['nickname']} / {row['age'] or row['age_key']} / {row['region'] or '-'}",
             f"사유: {row['reason'] or '-'}",
             "",
         ]
     lines += [
-        "추가: /블랙추가 닉네임 년생 지역 대분류 / 사유",
+        "추가: /블랙추가 성별 닉네임 년생 지역 사유",
         "검색: /블랙리스트 닉네임 또는 /블랙리스트 년생",
         "삭제: /블랙삭제 번호1 번호2 ...",
     ]
@@ -11139,25 +11143,22 @@ def blacklist_entries_text(arg=""):
 
 def add_blacklist_entry(arg, added_by=""):
     raw = str(arg or "").strip()
-    parts = raw.split(maxsplit=3)
-    if len(parts) < 4:
+    parts = raw.split(maxsplit=4)
+    if len(parts) < 5:
         return (
-            "사용법: /블랙추가 닉네임 년생 지역 대분류 / 사유\n\n"
-            "예시: /블랙추가 로건/지옥 01 대구 블랙리스트 / 과도한 집착"
+            "사용법: /블랙추가 성별 닉네임 년생 지역 사유\n\n"
+            "예시: /블랙추가 남 로건,지옥 01 대구 과도한 집착"
         )
 
-    nickname_raw, age_raw, region, detail = parts
+    gender, nickname_raw, age_raw, region, detail = parts
     aliases = blacklist_aliases(nickname_raw)
     age_key = normalize_code666_birth_year(age_raw)
     if not aliases or not age_key:
         return "닉네임과 나이/년생을 다시 확인해 주세요."
 
-    if "/" in detail:
-        section, reason = detail.split("/", 1)
-    else:
-        section, reason = detail, ""
-    section = section.strip() or "직접추가"
-    reason = reason.strip() or "-"
+    gender = gender.strip() or "모름"
+    section = "블랙리스트"
+    reason = detail.strip() or "-"
 
     conn = db()
     cur = conn.cursor()
@@ -11166,11 +11167,12 @@ def add_blacklist_entry(arg, added_by=""):
         normalized_name = blacklist_entry_name_key(nickname)
         cur.execute("""
         INSERT INTO blacklist_entries (
-            nickname, normalized_name, age, age_key, region, section, reason, created_at, is_active
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+            nickname, normalized_name, gender, age, age_key, region, section, reason, created_at, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT(normalized_name, age_key)
         DO UPDATE SET
             nickname = excluded.nickname,
+            gender = excluded.gender,
             age = excluded.age,
             region = excluded.region,
             section = excluded.section,
@@ -11180,6 +11182,7 @@ def add_blacklist_entry(arg, added_by=""):
         """, (
             nickname,
             normalized_name,
+            gender,
             age_key,
             age_key,
             region.strip() or "-",
@@ -11187,13 +11190,13 @@ def add_blacklist_entry(arg, added_by=""):
             reason,
             now_str(),
         ))
-        added.append(f"- {nickname} / {age_key} / {region.strip() or '-'}")
+        added.append(f"- {gender} / {nickname} / {age_key} / {region.strip() or '-'}")
     conn.commit()
     conn.close()
 
     lines = ["🚨 블랙리스트 등록 완료", ""]
     lines.extend(added)
-    lines += ["", f"대분류: {section}", f"사유: {reason}"]
+    lines += ["", f"사유: {reason}"]
     return "\n".join(lines)
 
 
@@ -11224,7 +11227,7 @@ def delete_blacklist_entries(arg):
     missing = []
     for number in ordered_numbers:
         cur.execute(
-            "SELECT id, nickname, age, region FROM blacklist_entries WHERE id = ? AND COALESCE(is_active, 1) = 1",
+            "SELECT id, nickname, gender, age, region FROM blacklist_entries WHERE id = ? AND COALESCE(is_active, 1) = 1",
             (number,)
         )
         row = cur.fetchone()
@@ -11240,7 +11243,7 @@ def delete_blacklist_entries(arg):
         return "삭제할 블랙리스트 항목을 찾지 못했어요."
 
     lines = ["✅ 블랙리스트 삭제 완료", ""]
-    lines.extend([f"- #{row['id']} {row['nickname']} / {row['age']} / {row['region'] or '-'}" for row in deleted])
+    lines.extend([f"- #{row['id']} {row['gender'] or '-'} / {row['nickname']} / {row['age']} / {row['region'] or '-'}" for row in deleted])
     if missing:
         lines += ["", "찾지 못한 번호", ", ".join(f"#{number}" for number in missing)]
     return "\n".join(lines)
