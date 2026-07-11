@@ -11549,11 +11549,7 @@ def normalize_code666_birth_year(age_value):
     if not value:
         return ""
 
-    # "00/27", "00.27", "00년생 27살"처럼 년생과 나이가 함께 있으면 년생을 우선합니다.
-    birth_match = re.search(r"(?<!\d)(\d{2})(?:\s*(?:년생|/|\\|\.|-|,|\s))", value)
-    if birth_match:
-        return birth_match.group(1)
-
+    # "28 99년생", "00년생 27살"처럼 년생이 명시되면 그 값을 최우선으로 봅니다.
     explicit_birth = re.search(r"(?<!\d)(\d{2})\s*년생", value)
     if explicit_birth:
         return explicit_birth.group(1)
@@ -11561,6 +11557,11 @@ def normalize_code666_birth_year(age_value):
     four_digit = re.search(r"(19\d{2}|20\d{2})", value)
     if four_digit:
         return four_digit.group(1)[-2:]
+
+    # "00/27", "00.27"처럼 년생과 나이가 구분자로 함께 있으면 앞 값을 년생으로 봅니다.
+    birth_match = re.search(r"(?<!\d)(\d{2})(?:\s*(?:/|\\|\.|-|,))", value)
+    if birth_match:
+        return birth_match.group(1)
 
     numbers = re.findall(r"\d+", value)
     if not numbers:
