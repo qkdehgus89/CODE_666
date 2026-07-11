@@ -1730,6 +1730,47 @@ def init_db():
             (now_str(),)
         )
 
+    cur.execute("SELECT value FROM system_flags WHERE key = 'code666_profile_age_explicit_birth_fix_20260711_v1'")
+    profile_age_birth_fix_done = cur.fetchone()
+    if not profile_age_birth_fix_done:
+        created_at = now_str()
+
+        def explicit_birth_from_form(form_text):
+            text = str(form_text or "")
+            birth_match = re.search(r"(?<!\d)(\d{2})\s*년생", text)
+            if birth_match:
+                return birth_match.group(1)
+            full_year_match = re.search(r"(19\d{2}|20\d{2})\s*년생", text)
+            if full_year_match:
+                return full_year_match.group(1)[-2:]
+            return ""
+
+        cur.execute("""
+        SELECT user_id, profile_age, form_text
+        FROM genealogy_profiles
+        WHERE COALESCE(form_text, '') LIKE '%년생%'
+        """)
+        for row in cur.fetchall():
+            fixed_age = explicit_birth_from_form(row["form_text"])
+            current_age = str(row["profile_age"] or "").strip()
+            if not fixed_age or current_age == fixed_age:
+                continue
+            cur.execute("""
+            UPDATE genealogy_profiles
+            SET profile_age = ?, updated_at = ?
+            WHERE user_id = ?
+            """, (fixed_age, created_at, row["user_id"]))
+            cur.execute("""
+            UPDATE users
+            SET profile_age = ?, profile_updated_at = ?, updated_at = ?
+            WHERE user_id = ?
+            """, (fixed_age, created_at, created_at, row["user_id"]))
+
+        cur.execute(
+            "INSERT INTO system_flags (key, value) VALUES ('code666_profile_age_explicit_birth_fix_20260711_v1', ?)",
+            (created_at,)
+        )
+
     cur.execute("SELECT value FROM system_flags WHERE key = 'code666_blacklist_seed_20260710_v3'")
     blacklist_seed_done = cur.fetchone()
     if not blacklist_seed_done:
