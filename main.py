@@ -13428,11 +13428,12 @@ def code666_member_list_text():
         if is_inactive_or_deleted_member(row, blocked_keys):
             continue
         role = code666_member_row_role(row, manual_role_map)
+        is_manual_profile = str(row_value(row, "source_id") or "").strip() == "manual_genealogy"
         last_seen_source_id = str(row_value(row, "last_seen_source_id") or "").strip()
         in_main_room = bool(main_source_id and last_seen_source_id == main_source_id)
         in_outing_room = bool(out_source_id and last_seen_source_id == out_source_id)
 
-        if main_source_id and not in_main_room and not in_outing_room:
+        if main_source_id and not is_manual_profile and not in_main_room and not in_outing_room:
             continue
 
         if role:
