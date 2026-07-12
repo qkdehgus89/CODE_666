@@ -157,7 +157,7 @@ def is_operator_command(text):
         "/족보삭제", "/족보수정", "/족보분류",
         "/주의유저", "/블랙리스트", "/블랙추가", "/블랙삭제",
         "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/수락", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
-        "/마디수", "/전체마디수",
+        "/마디수", "/전체마디수", "/특정마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
         "/가챠", "/가챠시스템", "/가챠횟수", "/상가챠", "/중가챠", "/하가챠",
@@ -181,7 +181,7 @@ def is_operator_command(text):
         "/상품추가 ", "/상품등록 ", "/상품삭제 ",
         "/사용처리 ", "/구매취소 ", "/아이템지급 ",
         "/유저아이템삭제 ",
-        "/마디수 ", "/전체마디수 ", "/경고 ", "/경고누적일 ", "/누적경고 ", "/단벙참여확인 ", "/단벙참석확인 ",
+        "/마디수 ", "/전체마디수 ", "/특정마디수 ", "/경고 ", "/경고누적일 ", "/누적경고 ", "/단벙참여확인 ", "/단벙참석확인 ",
         "/운영진친밀도 ", "/운영진친밀도확인 ",
         "/진실질문 ", "/진실기록 ", "/진실질문추가 ",
         "/코인검증 ", "/최근오류 ",
@@ -224,6 +224,7 @@ def is_enabled_operator_command(text):
         "/삭제유저",
         "/마디수",
         "/전체마디수",
+        "/특정마디수",
         "/경고",
         "/경고누적일",
         "/누적경고",
@@ -256,6 +257,7 @@ def is_enabled_operator_command(text):
         "/삭제복구",
         "/마디수 ",
         "/전체마디수 ",
+        "/특정마디수 ",
         "/경고 ",
         "/경고누적일 ",
         "/누적경고 ",
@@ -2514,6 +2516,7 @@ def operator_commands_text():
 /마디수
 /마디수 MM-DD
 /전체마디수 MM-DD~MM-DD
+/특정마디수 닉네임
 /경고
 /경고 MM-DD
 /경고누적일
@@ -2588,6 +2591,7 @@ def all_commands_text():
 /마디수
 /마디수 MM-DD
 /전체마디수 MM-DD~MM-DD
+/특정마디수 닉네임
 /경고
 /경고 MM-DD
 /경고누적일
@@ -4948,6 +4952,80 @@ def madi_range_history_text(start_date, end_date, source_id):
     for i, row in enumerate(rows, 1):
         day_text = f" / {int(row['active_days'] or 0)}일" if start_date != end_date else ""
         lines.append(f"{i}. {row['user_name']} - {int(row['count'] or 0)}마디{day_text}")
+
+    lines.append("━━━━━━━━━━")
+    return "\n".join(lines)
+
+
+def specific_madi_history_text(keyword, source_id):
+    keyword = str(keyword or "").strip()
+    if not keyword:
+        return "사용법: /특정마디수 닉네임"
+
+    target, err = resolve_active_user_by_nickname(keyword, purpose="조회 대상")
+    if err:
+        return err
+
+    user_id = target["user_id"]
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT MIN(date) AS first_date, MAX(date) AS last_date
+    FROM counts
+    WHERE source_id = ?
+      AND user_id = ?
+    """, (source_id, user_id))
+    summary = cur.fetchone()
+    first_date = summary["first_date"] if summary else None
+
+    if not first_date:
+        conn.close()
+        return (
+            "📊 특정 마디수 조회\n\n"
+            f"대상: {display_nickname(target['user_name'])}\n\n"
+            "아직 기록된 마디수가 없습니다."
+        )
+
+    end_date = today()
+    cur.execute("""
+    SELECT date, count
+    FROM counts
+    WHERE source_id = ?
+      AND user_id = ?
+      AND date BETWEEN ? AND ?
+    ORDER BY date ASC
+    """, (source_id, user_id, first_date, end_date))
+    rows = {row["date"]: int(row["count"] or 0) for row in cur.fetchall()}
+    conn.close()
+
+    start_dt = datetime.strptime(first_date, "%Y-%m-%d").date()
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+    days = []
+    cursor = start_dt
+    while cursor <= end_dt:
+        date_key = cursor.strftime("%Y-%m-%d")
+        days.append((date_key, rows.get(date_key, 0)))
+        cursor += timedelta(days=1)
+
+    total_count = sum(count for _, count in days)
+    active_days = sum(1 for _, count in days if count > 0)
+    average = total_count / len(days) if days else 0
+
+    lines = [
+        "📊 특정 마디수 조회",
+        "",
+        f"대상: {display_nickname(target['user_name'])}",
+        f"기간: {first_date} ~ {end_date}",
+        f"총 마디수: {total_count}마디",
+        f"기록일수: {active_days}일 / {len(days)}일",
+        f"일평균: {average:.1f}마디",
+        "",
+        "━━━━━━━━━━",
+    ]
+
+    for date_key, count in days:
+        mmdd = datetime.strptime(date_key, "%Y-%m-%d").strftime("%m-%d")
+        lines.append(f"{mmdd} - {count}마디")
 
     lines.append("━━━━━━━━━━")
     return "\n".join(lines)
@@ -14759,6 +14837,14 @@ def handle(event):
             reply(event.reply_token, err)
             return
         reply_many(event.reply_token, split_text_messages(madi_range_history_text(start_date, end_date, COUNT_SOURCE_ID)))
+        return
+
+    if text == "/특정마디수" or text.startswith("/특정마디수 "):
+        if not is_staff(user_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        keyword = text.replace("/특정마디수", "", 1).strip()
+        reply_many(event.reply_token, split_text_messages(specific_madi_history_text(keyword, COUNT_SOURCE_ID)))
         return
 
     if text == "/경고누적일" or text.startswith("/경고누적일 ") or text == "/누적경고" or text.startswith("/누적경고 "):
