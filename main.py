@@ -153,7 +153,7 @@ def is_operator_command(text):
 
     exact_commands = {
         "/운영명령어", "/전체명령어", "/운영방", "/운영방해제", "/DB상태", "/수집상태", "/최근로그", "/수집누락", "/전체유저", "/전체유저검사",
-        "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/인증방", "/블랙리스트방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
+        "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/인증방", "/블랙리스트방", "/외출방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/족보삭제", "/족보수정", "/족보분류",
         "/주의유저", "/블랙리스트", "/블랙추가", "/블랙삭제",
         "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/수락", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
@@ -208,6 +208,7 @@ def is_enabled_operator_command(text):
         "/족보업데이트방",
         "/인증방",
         "/블랙리스트방",
+        "/외출방",
         "/족보동기화",
         "/족보인원체크",
         "/족보삭제",
@@ -1908,6 +1909,8 @@ def room_info_text(event, source_id, user_id, user_name):
         labels.append("AUTH_SOURCE_ID")
     if source_id in blacklist_source_ids():
         labels.append("BLACKLIST_SOURCE_ID")
+    if is_outing_room(source_id):
+        labels.append("OUTING_SOURCE_ID")
 
     return "\n".join([
         "🧭 방정보",
@@ -2493,6 +2496,7 @@ def operator_commands_text():
 /족보업데이트방
 /인증방
 /블랙리스트방
+/외출방
 /족보동기화
 /족보인원체크
 /족보수정 남/녀/노미클 기존닉 새닉
@@ -2568,6 +2572,7 @@ def all_commands_text():
 /족보업데이트방
 /인증방
 /블랙리스트방
+/외출방
 /족보동기화
 /족보인원체크
 /족보수정 남/녀/노미클 기존닉 새닉
@@ -4596,6 +4601,22 @@ def set_user_active_by_id(user_id, value):
         updated_at = ?
     WHERE user_id = ?
     """, (value, now_str(), user_id))
+    changed = cur.rowcount
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def set_user_active_source_by_id(user_id, value, source_id=None):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    UPDATE users
+    SET is_active = ?,
+        last_seen_source_id = COALESCE(?, last_seen_source_id),
+        updated_at = ?
+    WHERE user_id = ?
+    """, (value, source_id, now_str(), user_id))
     changed = cur.rowcount
     conn.commit()
     conn.close()
@@ -11249,6 +11270,27 @@ def auth_source_ids():
     return {source_id for source_id in ids if source_id}
 
 
+def outing_source_id():
+    return str(get_bot_setting("outing_source_id", "") or "").strip()
+
+
+def is_outing_room(source_id):
+    target_source_id = outing_source_id()
+    return bool(target_source_id and source_id == target_source_id)
+
+
+def set_outing_room(source_id, user_name=""):
+    if not source_id or source_id == "NO_SOURCE_ID":
+        return "방 ID를 확인하지 못했어요. 외출방으로 쓸 방에서 다시 입력해 주세요."
+    set_bot_setting("outing_source_id", source_id, user_name)
+    return (
+        "🆇 외출방 설정 완료\n\n"
+        "이제 /자동족보 작성 시 이 방에 있는 일반 인원은 외출자로 분류됩니다.\n"
+        "Boss / Underboss / Admin / Viewer는 외출자에서 제외하고 기존 역할로 표시합니다.\n\n"
+        f"방 ID: {source_id}"
+    )
+
+
 def set_auth_room(source_id, user_name=""):
     if not source_id or source_id == "NO_SOURCE_ID":
         return "방 ID를 확인하지 못했어요. 인증방으로 쓸 방에서 다시 입력해 주세요."
@@ -13198,6 +13240,10 @@ def code666_member_row_role(row, manual_role_map=None):
 
 
 def code666_member_gender_group(row):
+    forced_group = str(row_value(row, "_forced_group") or "").strip()
+    if forced_group in {"male", "female", "nomicl", "out", "unknown"}:
+        return forced_group
+
     raw_name = str(row["user_name"] or "")
 
     if "🆇" in raw_name or "👾" in raw_name:
@@ -13332,6 +13378,7 @@ def code666_member_list_text():
         gp.source_id,
         gp.form_text,
         gp.updated_at AS profile_updated_at,
+        u.last_seen_source_id,
         COALESCE(u.is_active, 1) AS is_active,
         gp.updated_at
     FROM genealogy_profiles gp
@@ -13345,6 +13392,8 @@ def code666_member_list_text():
     """)
     rows = cur.fetchall()
     conn.close()
+    main_source_id = COUNT_SOURCE_ID
+    out_source_id = outing_source_id()
 
     lines = [
         "⚠️𝐂𝐨𝐝𝐞. 𝟔𝟔𝟔 𝐌𝐞𝐦𝐛𝐞𝐫 𝐥𝐢𝐬𝐭⚠️___________",
@@ -13379,8 +13428,26 @@ def code666_member_list_text():
         if is_inactive_or_deleted_member(row, blocked_keys):
             continue
         role = code666_member_row_role(row, manual_role_map)
+        last_seen_source_id = str(row_value(row, "last_seen_source_id") or "").strip()
+        in_main_room = bool(main_source_id and last_seen_source_id == main_source_id)
+        in_outing_room = bool(out_source_id and last_seen_source_id == out_source_id)
+
+        if main_source_id and not in_main_room and not in_outing_room:
+            continue
+
         if role:
             groups[role].append(row)
+            if in_outing_room:
+                continue
+            groups[code666_member_gender_group(row)].append(row)
+            continue
+
+        if in_outing_room:
+            row = dict(row)
+            row["_forced_group"] = "out"
+            groups["out"].append(row)
+            continue
+
         groups[code666_member_gender_group(row)].append(row)
 
     for key in list(groups.keys()):
@@ -14410,6 +14477,10 @@ def handle(event):
 
     if text == "/블랙리스트방":
         reply(event.reply_token, set_blacklist_room(source_id, user_name))
+        return
+
+    if text == "/외출방":
+        reply(event.reply_token, set_outing_room(source_id, user_name))
         return
 
     if text == "/상점":
@@ -15849,8 +15920,8 @@ if MemberJoinedEvent is not None:
                             if deleted_row:
                                 notices.append(rejoin_notice_text(deleted_row, source_id))
 
-                    # 닉네임은 첫 메시지 때 최신화되지만, 일단 재활성화
-                    set_user_active_by_id(joined_user_id, 1)
+                    # 닉네임은 첫 메시지 때 최신화되지만, 방 위치는 입장 이벤트로도 기록합니다.
+                    set_user_active_source_by_id(joined_user_id, 1, source_id)
                     print("MEMBER JOINED:", source_id, joined_user_id)
 
             reply_token = getattr(event, "reply_token", None)
