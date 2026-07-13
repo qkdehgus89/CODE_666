@@ -4068,12 +4068,9 @@ def active_user_rows_for_matching():
         u.updated_at,
         COALESCE(u.is_active, 1) AS is_active
     FROM users u
-    LEFT JOIN deleted_users d
-      ON d.original_user_id = u.user_id
     WHERE u.user_id IS NOT NULL
       AND u.user_id != ''
       AND COALESCE(u.is_active, 1) = 1
-      AND d.original_user_id IS NULL
     ORDER BY u.updated_at DESC, u.user_name ASC
     """)
     rows = [dict(row) for row in cur.fetchall()]
@@ -4162,6 +4159,12 @@ def inactive_user_match_rows(keyword, limit=5):
     UNION ALL
     SELECT id AS deleted_id, user_name, 'deleted' AS status
     FROM deleted_users
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM users u
+        WHERE u.user_id = deleted_users.original_user_id
+          AND COALESCE(u.is_active, 1) = 1
+    )
     ORDER BY status DESC, user_name ASC
     """)
     rows = []
@@ -14170,14 +14173,26 @@ def move_user_to_deleted(user_id, user_name, deleted_by):
 def deleted_users_text():
     conn = db()
     cur = conn.cursor()
-    cur.execute("SELECT id, user_name, deleted_by, deleted_at FROM deleted_users ORDER BY id DESC LIMIT 50")
+    cur.execute("""
+    SELECT
+        id,
+        original_user_id,
+        user_name,
+        deleted_by,
+        deleted_at,
+        COUNT(*) OVER (PARTITION BY original_user_id) AS delete_count
+    FROM deleted_users
+    ORDER BY id DESC
+    LIMIT 50
+    """)
     rows = cur.fetchall()
     conn.close()
     if not rows:
         return "🗑 삭제유저 목록이 없습니다."
     lines = ["🗑 삭제유저 목록", ""]
     for i, row in enumerate(rows, 1):
-        lines.append(f"{i}. #{row['id']} {row['user_name']} / 삭제일: {row['deleted_at']} / 삭제자: {row['deleted_by'] or '-'}")
+        count_text = f" / 누적 {int(row['delete_count'] or 0)}회" if int(row["delete_count"] or 0) >= 2 else ""
+        lines.append(f"{i}. #{row['id']} {row['user_name']} / 삭제일: {row['deleted_at']} / 삭제자: {row['deleted_by'] or '-'}{count_text}")
     lines += ["", "복구: /삭제복구 번호 또는 /삭제복구 #ID"]
     return "\n".join(lines)
 
@@ -14375,6 +14390,41 @@ def find_deleted_user_by_original_id(user_id):
     return dict(row) if row else None
 
 
+def deleted_user_rejoin_stats(user_id):
+    user_id = str(user_id or "").strip()
+    if not user_id:
+        return None
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT
+        COUNT(*) AS delete_count,
+        MAX(id) AS latest_id,
+        MIN(deleted_at) AS first_deleted_at,
+        MAX(deleted_at) AS latest_deleted_at
+    FROM deleted_users
+    WHERE original_user_id = ?
+    """, (user_id,))
+    summary = cur.fetchone()
+    if not summary or int(summary["delete_count"] or 0) <= 0:
+        conn.close()
+        return None
+    cur.execute("""
+    SELECT id, original_user_id, user_name, deleted_by, deleted_at
+    FROM deleted_users
+    WHERE id = ?
+    """, (summary["latest_id"],))
+    latest = cur.fetchone()
+    conn.close()
+    if not latest:
+        return None
+    data = dict(latest)
+    data["delete_count"] = int(summary["delete_count"] or 0)
+    data["first_deleted_at"] = summary["first_deleted_at"]
+    data["latest_deleted_at"] = summary["latest_deleted_at"]
+    return data
+
+
 def rejoin_notice_text(deleted_row, source_id=""):
     lines = [
         "⚠️ 재입장 유저 감지\n\n"
@@ -14387,6 +14437,26 @@ def rejoin_notice_text(deleted_row, source_id=""):
     lines += [
         "",
         "삭제유저 DB에 기록이 남아있는 유저입니다.",
+        "필요하면 /삭제유저 에서 기록을 확인해 주세요.",
+    ]
+    return "\n".join(lines)
+
+
+def repeated_rejoin_notice_text(deleted_stats, source_id=""):
+    lines = [
+        "🚨 반복 출입 유저 감지",
+        "",
+        f"대상: {deleted_stats.get('user_name') or '-'}",
+        f"삭제 기록: {int(deleted_stats.get('delete_count') or 0)}회",
+        f"최초 삭제일: {deleted_stats.get('first_deleted_at') or '-'}",
+        f"최근 삭제일: {deleted_stats.get('latest_deleted_at') or deleted_stats.get('deleted_at') or '-'}",
+        f"최근 삭제자: {deleted_stats.get('deleted_by') or '-'}",
+    ]
+    if source_id:
+        lines.append(f"감지방: {source_id}")
+    lines += [
+        "",
+        "삭제유저 DB 기준 2회 이상 기록된 유저입니다.",
         "필요하면 /삭제유저 에서 기록을 확인해 주세요.",
     ]
     return "\n".join(lines)
@@ -14422,7 +14492,7 @@ def restore_deleted_user_by_index(arg):
                 restored += 1
             except Exception as e:
                 print("RESTORE_SKIP", table, e)
-    cur.execute("DELETE FROM deleted_users WHERE id = ?", (row["id"],))
+    cur.execute("DELETE FROM deleted_users WHERE original_user_id = ?", (row["original_user_id"],))
     conn.commit()
     conn.close()
     return True, f"✅ 삭제유저 복구 완료\n\n대상: {row['user_name']}\n복구 레코드: {restored}개"
@@ -14472,10 +14542,11 @@ def restore_deleted_user_by_original_id(user_id, source_id=None):
         updated_at = ?
     WHERE user_id = ?
     """, (source_id, now_str(), user_id))
-    cur.execute("DELETE FROM deleted_users WHERE id = ?", (row["id"],))
+    cur.execute("DELETE FROM deleted_users WHERE original_user_id = ?", (row["original_user_id"],))
+    removed = cur.rowcount
     conn.commit()
     conn.close()
-    return True, f"{row['user_name']} / {restored} records"
+    return True, f"{row['user_name']} / {restored} records / removed deleted rows {removed}"
 
 
 def calculate_manitto_goal_and_rewards(hunter_user_id, target_user_id, manitto_type):
@@ -16113,6 +16184,10 @@ if MemberJoinedEvent is not None:
                 joined_user_id = getattr(member, "user_id", None)
 
                 if joined_user_id:
+                    deleted_stats = deleted_user_rejoin_stats(joined_user_id)
+                    if deleted_stats and int(deleted_stats.get("delete_count") or 0) >= 2:
+                        notices.append(repeated_rejoin_notice_text(deleted_stats, source_id))
+
                     if source_id == COUNT_SOURCE_ID:
                         restored, restore_detail = restore_deleted_user_by_original_id(joined_user_id, source_id)
                         if restored:
@@ -16123,7 +16198,9 @@ if MemberJoinedEvent is not None:
                         if caution_row:
                             notices.append(caution_rejoin_notice_text(caution_row, source_id))
                         else:
-                            deleted_row = find_deleted_user_by_original_id(joined_user_id)
+                            deleted_row = None if (
+                                deleted_stats and int(deleted_stats.get("delete_count") or 0) >= 2
+                            ) else (deleted_stats or find_deleted_user_by_original_id(joined_user_id))
                             if deleted_row:
                                 notices.append(rejoin_notice_text(deleted_row, source_id))
 
