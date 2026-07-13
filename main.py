@@ -3390,6 +3390,8 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
         purpose="대결 상대",
     )
     if err:
+        if "찾지 못했습니다" in err:
+            return dice_duel_target_not_found_text(target_keyword)
         return err
 
     existing = active_dice_duel_for_user(source_id, target["user_id"])
@@ -4144,6 +4146,104 @@ def resolve_active_user_by_nickname(keyword, exclude_user_id=None, purpose="대�
     for row in best[:5]:
         lines.append(f"- {row['user_name']}")
     return None, "\n".join(lines)
+
+
+def inactive_user_match_names(keyword, limit=5):
+    query = normalize_mention_name(keyword)
+    if len(query) < 2:
+        return []
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT user_name
+    FROM users
+    WHERE COALESCE(is_active, 1) = 0
+    UNION
+    SELECT user_name
+    FROM deleted_users
+    ORDER BY user_name ASC
+    """)
+    names = []
+    seen = set()
+    for row in cur.fetchall():
+        name = str(row["user_name"] or "").strip()
+        if not name:
+            continue
+        if user_match_score(keyword, name) is None:
+            continue
+        label = display_nickname(name)
+        if label in seen:
+            continue
+        seen.add(label)
+        names.append(label)
+        if len(names) >= limit:
+            break
+    conn.close()
+    return names
+
+
+def genealogy_only_match_names(keyword, limit=5):
+    query = normalize_mention_name(keyword)
+    if len(query) < 2:
+        return []
+
+    active_user_ids = {row["user_id"] for row in active_user_rows_for_matching()}
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT user_id, user_name, profile_nickname
+    FROM genealogy_profiles
+    ORDER BY COALESCE(profile_nickname, user_name) ASC
+    """)
+    names = []
+    seen = set()
+    for row in cur.fetchall():
+        if row["user_id"] in active_user_ids:
+            continue
+        values = [row["profile_nickname"], row["user_name"]]
+        if not any(user_match_score(keyword, value or "") is not None for value in values):
+            continue
+        label = display_nickname(row["profile_nickname"] or row["user_name"])
+        if label in seen:
+            continue
+        seen.add(label)
+        names.append(label)
+        if len(names) >= limit:
+            break
+    conn.close()
+    return names
+
+
+def dice_duel_target_not_found_text(keyword):
+    query = normalize_mention_name(keyword)
+    if len(query) < 2:
+        return (
+            "대결 상대를 찾지 못했습니다.\n"
+            "닉네임은 최소 2글자 이상 입력해 주세요."
+        )
+
+    inactive_names = inactive_user_match_names(keyword)
+    if inactive_names:
+        return (
+            "대결 상대를 찾지 못했습니다.\n\n"
+            "비활성/삭제유저로 잡힌 이름이 있어요.\n"
+            + "\n".join(f"- {name}" for name in inactive_names)
+        )
+
+    genealogy_names = genealogy_only_match_names(keyword)
+    if genealogy_names:
+        return (
+            "대결 상대를 찾지 못했습니다.\n\n"
+            "족보에는 보이지만, 아직 봇이 LINE 유저 정보를 확인하지 못한 상태예요.\n"
+            "상대가 공창에서 한 번 말하면 듀얼 대상으로 잡을 수 있습니다.\n\n"
+            + "\n".join(f"- {name}" for name in genealogy_names)
+        )
+
+    return (
+        "대결 상대를 찾지 못했습니다.\n"
+        "닉네임을 조금만 더 정확히 입력해 주세요."
+    )
 
 
 def find_users(keyword, limit=10):
