@@ -3712,6 +3712,58 @@ def active_nunchi_game(source_id):
     return int(row["id"]) if row else None
 
 
+def expire_stale_nunchi_games(source_id):
+    if source_id != COUNT_SOURCE_ID:
+        return []
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT
+        g.id,
+        g.started_at,
+        g.started_by_user_name,
+        MAX(n.created_at) AS last_number_at
+    FROM nunchi_games g
+    LEFT JOIN nunchi_numbers n
+      ON n.game_id = g.id
+    WHERE g.source_id = ?
+      AND g.status = 'active'
+    GROUP BY g.id
+    """, (source_id,))
+    rows = cur.fetchall()
+
+    expired_ids = []
+    for row in rows:
+        last_activity = row["last_number_at"] or row["started_at"]
+        try:
+            last_dt = datetime.strptime(last_activity, "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+        except Exception:
+            continue
+        if datetime.now(KST) - last_dt >= timedelta(minutes=5):
+            expired_ids.append(int(row["id"]))
+
+    notices = []
+    if expired_ids:
+        cur.execute(
+            f"UPDATE nunchi_games SET status = 'cancelled', ended_at = ? WHERE id IN ({','.join('?' for _ in expired_ids)})",
+            [now_str(), *expired_ids]
+        )
+        cur.execute(
+            f"UPDATE nunchi_duplicate_checks SET announced_at = COALESCE(announced_at, ?) WHERE game_id IN ({','.join('?' for _ in expired_ids)})",
+            [now_str(), *expired_ids]
+        )
+        notices.append(
+            "🎴 눈치게임 취소\n\n"
+            "5분 이상 진행이 없어 자동으로 취소되었습니다.\n"
+            "다시 시작하려면 /눈치게임 을 입력해 주세요."
+        )
+
+    conn.commit()
+    conn.close()
+    return notices
+
+
 def schedule_nunchi_duplicate_check(cur, game_id, number):
     scheduled_at = (datetime.now(KST) + timedelta(seconds=5)).strftime("%Y-%m-%d %H:%M:%S")
     cur.execute("""
@@ -14633,6 +14685,7 @@ def handle(event):
                     if join_profile_msg:
                         public_notices.append(join_profile_msg)
                 process_mentions(date_str, source_id, user_id, user_name, message_text)
+                public_notices.extend(expire_stale_nunchi_games(source_id))
                 nunchi_msg = process_nunchi_number(source_id, user_id, user_name, message_text)
                 if nunchi_msg:
                     public_notices.append(nunchi_msg)
