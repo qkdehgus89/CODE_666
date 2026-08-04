@@ -13619,10 +13619,10 @@ def code666_member_list_text():
     cur = conn.cursor()
     cur.execute("""
     SELECT
-        gp.user_id,
-        gp.user_name,
-        gp.gender,
-        gp.is_nomicl,
+        u.user_id,
+        COALESCE(gp.user_name, u.user_name) AS user_name,
+        COALESCE(gp.gender, u.gender, 'unknown') AS gender,
+        COALESCE(gp.is_nomicl, u.is_nomicl, 0) AS is_nomicl,
         gp.profile_age,
         gp.profile_region,
         gp.profile_join_note,
@@ -13638,29 +13638,29 @@ def code666_member_list_text():
             WHEN EXISTS (
                 SELECT 1
                 FROM counts c
-                WHERE c.user_id = gp.user_id
+                WHERE c.user_id = u.user_id
                   AND c.source_id = ?
                 LIMIT 1
             )
             OR EXISTS (
                 SELECT 1
                 FROM chat_logs l
-                WHERE l.user_id = gp.user_id
+                WHERE l.user_id = u.user_id
                   AND l.source_id = ?
                 LIMIT 1
             )
             THEN 1
             ELSE 0
         END AS has_main_room_activity,
-        gp.updated_at
-    FROM genealogy_profiles gp
-    LEFT JOIN users u
-      ON u.user_id = gp.user_id
+        COALESCE(gp.updated_at, u.updated_at) AS updated_at
+    FROM users u
+    LEFT JOIN genealogy_profiles gp
+      ON gp.user_id = u.user_id
     LEFT JOIN deleted_users d
-      ON d.original_user_id = gp.user_id
+      ON d.original_user_id = u.user_id
     WHERE COALESCE(u.is_active, 1) = 1
       AND d.original_user_id IS NULL
-    ORDER BY COALESCE(gp.profile_nickname, gp.user_name) ASC
+    ORDER BY COALESCE(gp.profile_nickname, gp.user_name, u.user_name) ASC
     """, (COUNT_SOURCE_ID, COUNT_SOURCE_ID))
     rows = cur.fetchall()
     conn.close()
