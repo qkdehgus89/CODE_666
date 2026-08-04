@@ -13633,6 +13633,24 @@ def code666_member_list_text():
         gp.updated_at AS profile_updated_at,
         u.last_seen_source_id,
         COALESCE(u.is_active, 1) AS is_active,
+        CASE
+            WHEN EXISTS (
+                SELECT 1
+                FROM counts c
+                WHERE c.user_id = gp.user_id
+                  AND c.source_id = ?
+                LIMIT 1
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM chat_logs l
+                WHERE l.user_id = gp.user_id
+                  AND l.source_id = ?
+                LIMIT 1
+            )
+            THEN 1
+            ELSE 0
+        END AS has_main_room_activity,
         gp.updated_at
     FROM genealogy_profiles gp
     LEFT JOIN users u
@@ -13642,7 +13660,7 @@ def code666_member_list_text():
     WHERE COALESCE(u.is_active, 1) = 1
       AND d.original_user_id IS NULL
     ORDER BY COALESCE(gp.profile_nickname, gp.user_name) ASC
-    """)
+    """, (COUNT_SOURCE_ID, COUNT_SOURCE_ID))
     rows = cur.fetchall()
     conn.close()
     main_source_id = COUNT_SOURCE_ID
@@ -13683,7 +13701,8 @@ def code666_member_list_text():
         role = code666_member_row_role(row, manual_role_map)
         is_manual_profile = str(row_value(row, "source_id") or "").strip() == "manual_genealogy"
         last_seen_source_id = str(row_value(row, "last_seen_source_id") or "").strip()
-        in_main_room = bool(main_source_id and last_seen_source_id == main_source_id)
+        has_main_room_activity = int(row_value(row, "has_main_room_activity") or 0) == 1
+        in_main_room = bool(main_source_id and (last_seen_source_id == main_source_id or has_main_room_activity))
         in_outing_room = bool(out_source_id and last_seen_source_id == out_source_id)
 
         if main_source_id and not is_manual_profile and not in_main_room and not in_outing_room:
