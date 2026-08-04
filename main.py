@@ -11986,7 +11986,8 @@ def micl_candidates_text():
 def code666_genealogy_text():
     return (
         "📖 자동족보\n"
-        "수동족보를 우선 반영하고, 문답 등록자를 함께 정리한 자동 정리본입니다.\n\n"
+        "봇이 확인한 메인방/외출방 인원 기준으로 정리한 자동 정리본입니다.\n"
+        "수동족보 정보는 이름/역할/분류 참고용으로만 반영됩니다.\n\n"
         + code666_member_list_text()
     )
 
@@ -12002,7 +12003,7 @@ def code666_genealogy_menu_text():
     return (
         "📖 족보 조회\n\n"
         "/수동족보 - /족보입력 으로 저장한 족보\n"
-        "/자동족보 - 수동족보 우선 자동 정리본"
+        "/자동족보 - 메인방/외출방 확인 인원 기준 자동 정리본"
     )
 
 
@@ -13699,13 +13700,12 @@ def code666_member_list_text():
         if is_inactive_or_deleted_member(row, blocked_keys):
             continue
         role = code666_member_row_role(row, manual_role_map)
-        is_manual_profile = str(row_value(row, "source_id") or "").strip() == "manual_genealogy"
         last_seen_source_id = str(row_value(row, "last_seen_source_id") or "").strip()
         has_main_room_activity = int(row_value(row, "has_main_room_activity") or 0) == 1
         in_main_room = bool(main_source_id and (last_seen_source_id == main_source_id or has_main_room_activity))
         in_outing_room = bool(out_source_id and last_seen_source_id == out_source_id)
 
-        if main_source_id and not is_manual_profile and not in_main_room and not in_outing_room:
+        if main_source_id and not in_main_room and not in_outing_room:
             continue
 
         if role:
