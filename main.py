@@ -156,7 +156,7 @@ def is_operator_command(text):
         "/족보입력", "/족보", "/수동족보", "/자동족보", "/족보업데이트방", "/인증방", "/블랙리스트방", "/외출방", "/족보동기화", "/족보인원체크", "/미클", "/경고", "/완전삭제",
         "/족보삭제", "/족보수정", "/족보분류",
         "/주의유저", "/블랙리스트", "/블랙추가", "/블랙삭제",
-        "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/수락", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
+        "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/동전듀얼", "/수락", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
         "/마디수", "/전체마디수", "/특정마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -174,7 +174,7 @@ def is_operator_command(text):
         "/주의유저추가 ", "/주의유저삭제", "/블랙추가 ", "/블랙삭제",
         "/동반 ", "/초대 ", "/여초 ",
         "/족보삭제 ", "/족보수정 ", "/족보분류 ",
-        "/하이듀얼 ", "/로우듀얼 ",
+        "/하이듀얼 ", "/로우듀얼 ", "/동전듀얼 ",
         "/지급 ", "/차감 ", "/코인내역 ", "/삭제복구",
         "/구매 ", "/가챠 ",
         "/회생초기화 ",
@@ -232,6 +232,7 @@ def is_enabled_operator_command(text):
         "/주사위듀얼",
         "/하이듀얼",
         "/로우듀얼",
+        "/동전듀얼",
         "/수락",
         "/거절",
         "/듀얼취소",
@@ -264,6 +265,7 @@ def is_enabled_operator_command(text):
         "/주사위듀얼 ",
         "/하이듀얼 ",
         "/로우듀얼 ",
+        "/동전듀얼 ",
     ]
     return text in exact_commands or any(text.startswith(prefix) for prefix in prefix_commands)
 
@@ -494,6 +496,25 @@ def init_db():
         meat_win_rate REAL NOT NULL DEFAULT 0.75,
         challenger_roll INTEGER,
         target_roll INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS coin_duels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        challenger_user_id TEXT NOT NULL,
+        challenger_user_name TEXT NOT NULL,
+        target_user_id TEXT NOT NULL,
+        target_user_name TEXT NOT NULL,
+        challenger_side TEXT NOT NULL DEFAULT '앞면',
+        target_side TEXT NOT NULL DEFAULT '뒷면',
+        result_side TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -2446,6 +2467,7 @@ def beginner_guide_text():
 /동전던지기
 /하이듀얼 닉네임
 /로우듀얼 닉네임
+/동전듀얼 닉네임
 /수락
 /거절
 /듀얼취소
@@ -2537,6 +2559,7 @@ def all_commands_text():
 /출석
 /주사위
 /동전던지기
+/동전듀얼 닉네임
 /눈치게임
 /포춘쿠키
 /코드쿠키
@@ -3356,6 +3379,63 @@ def active_dice_duel_for_user(source_id, user_id):
     return dict(row) if row else None
 
 
+def expire_old_coin_duels(source_id=None):
+    cutoff = (datetime.now(KST) - timedelta(minutes=DICE_DUEL_EXPIRE_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = db()
+    cur = conn.cursor()
+    if source_id:
+        cur.execute("""
+        UPDATE coin_duels
+        SET status = 'expired',
+            updated_at = ?,
+            completed_at = ?
+        WHERE source_id = ?
+          AND status = 'pending'
+          AND created_at <= ?
+        """, (now_str(), now_str(), source_id, cutoff))
+    else:
+        cur.execute("""
+        UPDATE coin_duels
+        SET status = 'expired',
+            updated_at = ?,
+            completed_at = ?
+        WHERE status = 'pending'
+          AND created_at <= ?
+        """, (now_str(), now_str(), cutoff))
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
+def active_coin_duel_for_user(source_id, user_id):
+    expire_old_coin_duels(source_id)
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT *
+    FROM coin_duels
+    WHERE source_id = ?
+      AND status = 'pending'
+      AND (challenger_user_id = ? OR target_user_id = ?)
+    ORDER BY id DESC
+    LIMIT 1
+    """, (source_id, user_id, user_id))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def active_duel_for_user(source_id, user_id):
+    dice_duel = active_dice_duel_for_user(source_id, user_id)
+    if dice_duel:
+        return "dice", dice_duel
+    coin_duel = active_coin_duel_for_user(source_id, user_id)
+    if coin_duel:
+        return "coin", coin_duel
+    return None, None
+
+
 def dice_duel_type_label(duel_type):
     return "하이듀얼" if duel_type == "high" else "로우듀얼"
 
@@ -3394,15 +3474,16 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
     if not target_keyword:
         return "사용법: /하이듀얼 닉네임 또는 /로우듀얼 닉네임"
 
-    existing = active_dice_duel_for_user(source_id, challenger_user_id)
+    duel_kind, existing = active_duel_for_user(source_id, challenger_user_id)
     if existing:
         opponent_name = (
             existing["target_user_name"]
             if existing["challenger_user_id"] == challenger_user_id
             else existing["challenger_user_name"]
         )
+        label = "동전듀얼" if duel_kind == "coin" else "주사위듀얼"
         return (
-            "🎲 이미 진행 중인 주사위듀얼이 있어요.\n\n"
+            f"🎲 이미 진행 중인 {label}이 있어요.\n\n"
             f"상대: {display_nickname(opponent_name)}님\n"
             "먼저 현재 대결을 마무리해 주세요.\n"
             "지목받은 사람은 /수락 또는 /거절 을 입력하면 됩니다.\n"
@@ -3419,9 +3500,10 @@ def start_dice_duel(source_id, challenger_user_id, challenger_user_name, target_
             return dice_duel_target_not_found_text(target_keyword)
         return err
 
-    existing = active_dice_duel_for_user(source_id, target["user_id"])
+    duel_kind, existing = active_duel_for_user(source_id, target["user_id"])
     if existing:
-        return f"🎲 {display_nickname(target['user_name'])}님은 이미 진행 중인 주사위듀얼이 있어요."
+        label = "동전듀얼" if duel_kind == "coin" else "주사위듀얼"
+        return f"🎲 {display_nickname(target['user_name'])}님은 이미 진행 중인 {label}이 있어요."
 
     conn = db()
     cur = conn.cursor()
@@ -3539,6 +3621,181 @@ def cancel_dice_duel(source_id, user_id, user_name):
         "🎲 주사위듀얼 취소\n\n"
         f"{display_nickname(user_name)}님이 대결 신청을 취소했습니다."
     )
+
+
+def start_coin_duel(source_id, challenger_user_id, challenger_user_name, target_keyword):
+    if not target_keyword:
+        return "사용법: /동전듀얼 닉네임"
+
+    duel_kind, existing = active_duel_for_user(source_id, challenger_user_id)
+    if existing:
+        opponent_name = (
+            existing["target_user_name"]
+            if existing["challenger_user_id"] == challenger_user_id
+            else existing["challenger_user_name"]
+        )
+        label = "동전듀얼" if duel_kind == "coin" else "주사위듀얼"
+        return (
+            f"🪙 이미 진행 중인 {label}이 있어요.\n\n"
+            f"상대: {display_nickname(opponent_name)}님\n"
+            "먼저 현재 대결을 마무리해 주세요.\n"
+            "지목받은 사람은 /수락 또는 /거절 을 입력하면 됩니다.\n"
+            "신청자는 /듀얼취소 로 취소할 수 있어요."
+        )
+
+    target, err = resolve_active_user_by_nickname(
+        target_keyword,
+        exclude_user_id=challenger_user_id,
+        purpose="대결 상대",
+    )
+    if err:
+        if "찾지 못했습니다" in err:
+            return dice_duel_target_not_found_text(target_keyword)
+        return err
+
+    duel_kind, existing = active_duel_for_user(source_id, target["user_id"])
+    if existing:
+        label = "동전듀얼" if duel_kind == "coin" else "주사위듀얼"
+        return f"🪙 {display_nickname(target['user_name'])}님은 이미 진행 중인 {label}이 있어요."
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT INTO coin_duels (
+        date, source_id,
+        challenger_user_id, challenger_user_name,
+        target_user_id, target_user_name,
+        challenger_side, target_side, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, '앞면', '뒷면', 'pending', ?, ?)
+    """, (
+        today(),
+        source_id,
+        challenger_user_id,
+        challenger_user_name,
+        target["user_id"],
+        target["user_name"],
+        now_str(),
+        now_str(),
+    ))
+    conn.commit()
+    conn.close()
+
+    return (
+        "🪙 동전듀얼 신청\n\n"
+        f"{display_nickname(challenger_user_name)}님: 앞면\n"
+        f"{display_nickname(target['user_name'])}님: 뒷면\n\n"
+        "지는 사람이 사진공개입니다.\n\n"
+        f"{display_nickname(target['user_name'])}님이 /수락 하면 바로 동전을 던집니다.\n"
+        f"{display_nickname(challenger_user_name)}님은 /듀얼취소 로 취소할 수 있어요.\n"
+        f"{display_nickname(target['user_name'])}님은 원하지 않으면 /거절 을 입력하면 됩니다."
+    )
+
+
+def accept_coin_duel(source_id, user_id, user_name):
+    duel = active_coin_duel_for_user(source_id, user_id)
+    if not duel:
+        return "수락할 동전듀얼이 없어요."
+    if duel["target_user_id"] != user_id:
+        return "동전듀얼은 지목받은 사람만 수락할 수 있어요."
+
+    result_side = random.choice(["앞면", "뒷면"])
+    challenger_wins = result_side == duel["challenger_side"]
+    winner_name = duel["challenger_user_name"] if challenger_wins else duel["target_user_name"]
+    loser_name = duel["target_user_name"] if challenger_wins else duel["challenger_user_name"]
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    UPDATE coin_duels
+    SET result_side = ?,
+        status = 'completed',
+        updated_at = ?,
+        completed_at = ?
+    WHERE id = ?
+    """, (result_side, now_str(), now_str(), duel["id"]))
+    conn.commit()
+    conn.close()
+
+    return (
+        "🏆 동전듀얼 승패 알림\n\n"
+        f"{display_nickname(duel['challenger_user_name'])}님: {duel['challenger_side']}\n"
+        f"{display_nickname(duel['target_user_name'])}님: {duel['target_side']}\n\n"
+        f"결과: {result_side}\n\n"
+        f"승자: {display_nickname(winner_name)}님\n"
+        f"패자: {display_nickname(loser_name)}님\n\n"
+        f"📸 사진공개 대상: {display_nickname(loser_name)}님"
+    )
+
+
+def reject_coin_duel(source_id, user_id, user_name):
+    duel = active_coin_duel_for_user(source_id, user_id)
+    if not duel:
+        return "거절할 동전듀얼이 없어요."
+    if duel["target_user_id"] != user_id:
+        return "동전듀얼은 지목받은 사람만 거절할 수 있어요."
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    UPDATE coin_duels
+    SET status = 'rejected',
+        updated_at = ?,
+        completed_at = ?
+    WHERE id = ?
+    """, (now_str(), now_str(), duel["id"]))
+    conn.commit()
+    conn.close()
+
+    return (
+        "🪙 동전듀얼 거절\n\n"
+        f"{display_nickname(user_name)}님이 대결을 거절했습니다."
+    )
+
+
+def cancel_coin_duel(source_id, user_id, user_name):
+    duel = active_coin_duel_for_user(source_id, user_id)
+    if not duel:
+        return "취소할 동전듀얼이 없어요."
+    if duel["challenger_user_id"] != user_id:
+        return "듀얼취소는 신청한 사람만 사용할 수 있어요.\n지목받은 사람은 /거절 을 입력해 주세요."
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    UPDATE coin_duels
+    SET status = 'cancelled',
+        updated_at = ?,
+        completed_at = ?
+    WHERE id = ?
+    """, (now_str(), now_str(), duel["id"]))
+    conn.commit()
+    conn.close()
+
+    return (
+        "🪙 동전듀얼 취소\n\n"
+        f"{display_nickname(user_name)}님이 대결 신청을 취소했습니다."
+    )
+
+
+def accept_any_duel(source_id, user_id, user_name):
+    coin_duel = active_coin_duel_for_user(source_id, user_id)
+    if coin_duel:
+        return accept_coin_duel(source_id, user_id, user_name)
+    return accept_dice_duel(source_id, user_id, user_name)
+
+
+def reject_any_duel(source_id, user_id, user_name):
+    coin_duel = active_coin_duel_for_user(source_id, user_id)
+    if coin_duel:
+        return reject_coin_duel(source_id, user_id, user_name)
+    return reject_dice_duel(source_id, user_id, user_name)
+
+
+def cancel_any_duel(source_id, user_id, user_name):
+    coin_duel = active_coin_duel_for_user(source_id, user_id)
+    if coin_duel:
+        return cancel_coin_duel(source_id, user_id, user_name)
+    return cancel_dice_duel(source_id, user_id, user_name)
 
 
 def roll_dice_for_duel_or_normal(source_id, user_id, user_name, neutral_meat_odds=False):
@@ -14799,16 +15056,28 @@ def handle(event):
         reply_many(event.reply_token, split_text_messages(start_dice_duel(source_id, user_id, user_name, target_keyword, duel_type)))
         return
 
+    if text == "/동전듀얼":
+        reply(event.reply_token, "사용법: /동전듀얼 닉네임")
+        return
+
+    if text.startswith("/동전듀얼 "):
+        if is_private_chat(event):
+            reply(event.reply_token, "🪙 듀얼은 같은 방에서만 진행할 수 있어요.\n공창이나 운영방에서 /동전듀얼 닉네임 으로 신청해 주세요.")
+            return
+        target_keyword = text.replace("/동전듀얼", "", 1).strip()
+        reply_many(event.reply_token, split_text_messages(start_coin_duel(source_id, user_id, user_name, target_keyword)))
+        return
+
     if text == "/거절":
-        reply(event.reply_token, reject_dice_duel(source_id, user_id, user_name))
+        reply(event.reply_token, reject_any_duel(source_id, user_id, user_name))
         return
 
     if text == "/수락":
-        reply(event.reply_token, accept_dice_duel(source_id, user_id, user_name))
+        reply(event.reply_token, accept_any_duel(source_id, user_id, user_name))
         return
 
     if text == "/듀얼취소":
-        reply(event.reply_token, cancel_dice_duel(source_id, user_id, user_name))
+        reply(event.reply_token, cancel_any_duel(source_id, user_id, user_name))
         return
 
     if text == "/코드메이트":
@@ -15811,11 +16080,11 @@ def handle(event):
     # 유저 명령어
     # =========================
     enabled_user_commands = {
-        "/출석", "/주사위", "/동전던지기", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/수락", "/거절", "/듀얼취소",
+        "/출석", "/주사위", "/동전던지기", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/동전듀얼", "/수락", "/거절", "/듀얼취소",
         "/눈치게임", "/포춘쿠키", "/코드쿠키", "/메뉴추천", "/코드메이트",
         "/명령어", "/가이드",
     }
-    enabled_user_prefixes = ("/하이듀얼 ", "/로우듀얼 ")
+    enabled_user_prefixes = ("/하이듀얼 ", "/로우듀얼 ", "/동전듀얼 ")
     if text.startswith("/") and text not in enabled_user_commands and not any(text.startswith(prefix) for prefix in enabled_user_prefixes):
         return
 
@@ -15856,16 +16125,28 @@ def handle(event):
         reply_many(event.reply_token, split_text_messages(start_dice_duel(source_id, user_id, user_name, target_keyword, duel_type)))
         return
 
+    if text == "/동전듀얼":
+        reply(event.reply_token, "사용법: /동전듀얼 닉네임")
+        return
+
+    if text.startswith("/동전듀얼 "):
+        if is_private_chat(event):
+            reply(event.reply_token, "🪙 듀얼은 같은 방에서만 진행할 수 있어요.\n공창에서 /동전듀얼 닉네임 으로 신청해 주세요.")
+            return
+        target_keyword = text.replace("/동전듀얼", "", 1).strip()
+        reply_many(event.reply_token, split_text_messages(start_coin_duel(source_id, user_id, user_name, target_keyword)))
+        return
+
     if text == "/거절":
-        reply(event.reply_token, reject_dice_duel(source_id, user_id, user_name))
+        reply(event.reply_token, reject_any_duel(source_id, user_id, user_name))
         return
 
     if text == "/수락":
-        reply(event.reply_token, accept_dice_duel(source_id, user_id, user_name))
+        reply(event.reply_token, accept_any_duel(source_id, user_id, user_name))
         return
 
     if text == "/듀얼취소":
-        reply(event.reply_token, cancel_dice_duel(source_id, user_id, user_name))
+        reply(event.reply_token, cancel_any_duel(source_id, user_id, user_name))
         return
 
     if text == "/코드메이트":
