@@ -128,6 +128,15 @@ JOKBO_PENDING = {}
 # key: source_id / value: {type, name}
 JOKBO_RELATION_PENDING = {}
 
+SPECIAL_CHAT_REPLY_TARGETS = {"주라"}
+SPECIAL_CHAT_REPLY_MESSAGES = [
+    "웃음가오해줘",
+    "레이저가오해줘",
+    "일하는척하지마가오해줘",
+    "넌 못벗어나 가오해줘",
+    "아헤가오해줘",
+]
+
 # =========================
 # 권한
 # =========================
@@ -157,6 +166,7 @@ def is_operator_command(text):
         "/족보삭제", "/족보수정", "/족보분류",
         "/주의유저", "/블랙리스트", "/블랙추가", "/블랙삭제",
         "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/동전듀얼", "/수락", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
+        "/주라 온", "/주라 오프", "/주라온", "/주라오프",
         "/마디수", "/전체마디수", "/특정마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
         "/럭키드로우", "/럭키드로우구매", "/럭키드로우현황", "/럭키드로우결과",
@@ -238,6 +248,10 @@ def is_enabled_operator_command(text):
         "/듀얼취소",
         "/코드메이트",
         "/코드메이트초기화",
+        "/주라 온",
+        "/주라 오프",
+        "/주라온",
+        "/주라오프",
     }
     prefix_commands = [
         "/유저검색 ",
@@ -2489,6 +2503,8 @@ def operator_commands_text():
 /전체명령어
 /운영방
 /운영방해제
+/주라 온
+/주라 오프
 
 ━━━━━━━━━━
 👤 유저 관리
@@ -4213,6 +4229,25 @@ def normalize_match_text(text_value):
 
 def display_nickname(user_name):
     return normalize_mention_name(user_name) or str(user_name or "").strip()
+
+
+def special_chat_reply_for_user(user_name, text_value):
+    if not is_special_chat_reply_enabled():
+        return None
+
+    text_value = str(text_value or "").strip()
+    if not text_value or text_value.startswith("/"):
+        return None
+
+    tokens = set(nickname_tokens(user_name))
+    display = normalize_mention_name(user_name)
+    if display:
+        tokens.add(display)
+
+    normalized_name = normalize_match_text(user_name)
+    if tokens & SPECIAL_CHAT_REPLY_TARGETS or any(target in normalized_name for target in SPECIAL_CHAT_REPLY_TARGETS):
+        return random.choice(SPECIAL_CHAT_REPLY_MESSAGES)
+    return None
 
 
 def row_value(row, key, default=None):
@@ -11713,6 +11748,17 @@ def set_bot_setting(key, value, updated_by=""):
     conn.close()
 
 
+def is_special_chat_reply_enabled():
+    return get_bot_setting("special_chat_reply_jura_enabled", "1") == "1"
+
+
+def set_special_chat_reply_enabled(enabled, updated_by=""):
+    set_bot_setting("special_chat_reply_jura_enabled", "1" if enabled else "0", updated_by)
+    status = "ON" if enabled else "OFF"
+    message = "켜졌어요" if enabled else "꺼졌어요"
+    return f"✅ 주라 자동답변 {status}\n\n이제 주라 자동답변이 {message}."
+
+
 def admin_room_rows():
     try:
         conn = db()
@@ -15091,6 +15137,13 @@ def handle(event):
         reply(event.reply_token, reset_code_mate_claims())
         return
 
+    if text in ("/주라 온", "/주라 오프", "/주라온", "/주라오프"):
+        if not is_operator_room(source_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        reply(event.reply_token, set_special_chat_reply_enabled("오프" not in text, user_name))
+        return
+
     if text == "/방정보":
         reply(event.reply_token, room_info_text(event, source_id, user_id, user_name))
         return
@@ -15219,6 +15272,15 @@ def handle(event):
         lines += ["", "조회: /삭제유저", "복구: /삭제복구 번호"]
         reply_many(event.reply_token, split_text_messages("\n".join(lines)))
         return
+
+    try:
+        special_reply = special_chat_reply_for_user(user_name, text)
+        if special_reply:
+            notices = public_notices + [special_reply]
+            reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(notices))))
+            return
+    except Exception as e:
+        log_error("SPECIAL_CHAT_REPLY_ERROR", e)
 
     try:
         affinity_msg = process_affinity_message(source_id, user_id, user_name, text)
