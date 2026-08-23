@@ -195,6 +195,7 @@ def is_operator_command(text):
         "/운영진친밀도 ", "/운영진친밀도확인 ",
         "/진실질문 ", "/진실기록 ", "/진실질문추가 ",
         "/코인검증 ", "/최근오류 ",
+        "/주라코드 ",
     ]
 
     return text in exact_commands or any(text.startswith(prefix) for prefix in prefix_commands)
@@ -280,6 +281,7 @@ def is_enabled_operator_command(text):
         "/하이듀얼 ",
         "/로우듀얼 ",
         "/동전듀얼 ",
+        "/주라코드 ",
     ]
     return text in exact_commands or any(text.startswith(prefix) for prefix in prefix_commands)
 
@@ -2505,6 +2507,7 @@ def operator_commands_text():
 /운영방해제
 /주라 온
 /주라 오프
+/주라코드 대사
 
 ━━━━━━━━━━
 👤 유저 관리
@@ -4246,7 +4249,8 @@ def special_chat_reply_for_user(user_name, text_value):
 
     normalized_name = normalize_match_text(user_name)
     if tokens & SPECIAL_CHAT_REPLY_TARGETS or any(target in normalized_name for target in SPECIAL_CHAT_REPLY_TARGETS):
-        return random.choice(SPECIAL_CHAT_REPLY_MESSAGES)
+        messages = special_chat_reply_messages()
+        return random.choice(messages) if messages else None
     return None
 
 
@@ -11759,6 +11763,46 @@ def set_special_chat_reply_enabled(enabled, updated_by=""):
     return f"✅ 주라 자동답변 {status}\n\n이제 주라 자동답변이 {message}."
 
 
+def special_chat_reply_messages():
+    messages = list(SPECIAL_CHAT_REPLY_MESSAGES)
+    try:
+        saved = get_bot_setting("special_chat_reply_jura_messages", "[]")
+        extra_messages = json.loads(saved or "[]")
+        if isinstance(extra_messages, list):
+            for message in extra_messages:
+                message = str(message or "").strip()
+                if message and message not in messages:
+                    messages.append(message)
+    except Exception as e:
+        log_error("SPECIAL_CHAT_REPLY_MESSAGES_ERROR", e)
+    return messages
+
+
+def add_special_chat_reply_message(message, updated_by=""):
+    message = str(message or "").strip()
+    if not message:
+        return "사용법: /주라코드 추가할대사"
+    if len(message) > 300:
+        return "대사는 300자 이내로 입력해 주세요."
+
+    try:
+        saved = get_bot_setting("special_chat_reply_jura_messages", "[]")
+        messages = json.loads(saved or "[]")
+        if not isinstance(messages, list):
+            messages = []
+    except Exception:
+        messages = []
+
+    messages = [str(item).strip() for item in messages if str(item or "").strip()]
+    if message in SPECIAL_CHAT_REPLY_MESSAGES or message in messages:
+        return f"이미 등록된 주라 대사예요.\n\n{message}"
+
+    messages.append(message)
+    set_bot_setting("special_chat_reply_jura_messages", json.dumps(messages, ensure_ascii=False), updated_by)
+    total = len(SPECIAL_CHAT_REPLY_MESSAGES) + len(messages)
+    return f"✅ 주라 대사 추가 완료\n\n{message}\n\n현재 랜덤 후보: {total}개\n모든 대사는 같은 확률로 나옵니다."
+
+
 def admin_room_rows():
     try:
         conn = db()
@@ -15142,6 +15186,14 @@ def handle(event):
             reply(event.reply_token, operator_only_warning())
             return
         reply(event.reply_token, set_special_chat_reply_enabled("오프" not in text, user_name))
+        return
+
+    if text == "/주라코드" or text.startswith("/주라코드 "):
+        if not is_operator_room(source_id):
+            reply(event.reply_token, operator_only_warning())
+            return
+        message = text.replace("/주라코드", "", 1).strip()
+        reply(event.reply_token, add_special_chat_reply_message(message, user_name))
         return
 
     if text == "/방정보":
