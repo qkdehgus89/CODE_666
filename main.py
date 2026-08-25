@@ -17,6 +17,7 @@ from linebot.v3.messaging import (
     ApiClient,
     ApiException,
     Configuration,
+    ImageMessage,
     MessagingApi,
     ReplyMessageRequest,
     TextMessage,
@@ -138,6 +139,8 @@ SPECIAL_CHAT_REPLY_MESSAGES = [
 ]
 RANDOM_CHAT_REPLY_TARGETS = {"으앙"}
 MEAT_SHOUT_REPLY_TARGETS = {"미트"}
+BULJA_IMAGE_REPLY_TARGETS = {"불자"}
+BULJA_FULL_OWNERSHIP_IMAGE_PATH = "static/bulja_full_ownership.jpg"
 
 # =========================
 # 권한
@@ -2008,6 +2011,42 @@ def reply(reply_token, text):
             ReplyMessageRequest(
                 reply_token=reply_token,
                 messages=[TextMessage(text=text)]
+            )
+        )
+
+
+def public_asset_url(path):
+    base = (
+        os.getenv("PUBLIC_BASE_URL", "").strip()
+        or os.getenv("APP_BASE_URL", "").strip()
+        or os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+    )
+    if base and not base.startswith(("http://", "https://")):
+        base = "https://" + base
+
+    if not base:
+        host = request.headers.get("X-Forwarded-Host") or request.host
+        proto = request.headers.get("X-Forwarded-Proto") or "https"
+        if "railway.app" in host:
+            proto = "https"
+        base = f"{proto}://{host}"
+
+    return base.rstrip("/") + "/" + str(path or "").lstrip("/")
+
+
+def reply_image(reply_token, image_path):
+    image_url = public_asset_url(image_path)
+    with ApiClient(config) as client:
+        api = MessagingApi(client)
+        api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[
+                    ImageMessage(
+                        original_content_url=image_url,
+                        preview_image_url=image_url,
+                    )
+                ]
             )
         )
 
@@ -4264,6 +4303,12 @@ def meat_shout_reply_for_user(user_name, text_value):
     if not nickname_matches_any_target(user_name, MEAT_SHOUT_REPLY_TARGETS):
         return None
     return random.choice(["아 아다다"] * 5 + ["아 불꽃아다다"])
+
+
+def should_reply_bulja_full_ownership_image(user_name, text_value):
+    if str(text_value or "").strip() != "풀소유":
+        return False
+    return nickname_matches_any_target(user_name, BULJA_IMAGE_REPLY_TARGETS)
 
 
 def special_chat_reply_for_user(user_name, text_value):
@@ -15352,6 +15397,13 @@ def handle(event):
         lines += ["", "조회: /삭제유저", "복구: /삭제복구 번호"]
         reply_many(event.reply_token, split_text_messages("\n".join(lines)))
         return
+
+    try:
+        if should_reply_bulja_full_ownership_image(user_name, text):
+            reply_image(event.reply_token, BULJA_FULL_OWNERSHIP_IMAGE_PATH)
+            return
+    except Exception as e:
+        log_error("BULJA_FULL_OWNERSHIP_IMAGE_ERROR", e)
 
     try:
         special_reply = special_chat_reply_for_user(user_name, text)
