@@ -142,6 +142,17 @@ MEAT_SHOUT_REPLY_TARGETS = {"미트"}
 AREUM_RECITE_REPLY_TARGETS = {"아름"}
 BULJA_IMAGE_REPLY_TARGETS = {"불자"}
 BULJA_FULL_OWNERSHIP_IMAGE_PATH = "static/bulja_full_ownership.jpg"
+ADADA_CHANT_REPLY = """.　　　　\\　　　|
+　╲　　　　　　　　　　　╱
+　　　　　\\　　　　/
+　　　╲　 김으앙 ╱
+　╲ 아다다　╱
+-　- 불꽃아다다 　-　-
+　　╱ 이제누가아다해주냐 ╲
+　　　　
+　　╱　　　 　　\\　　╲
+　　　　　/　|　　\\\\
+　　　　 　　|"""
 
 # =========================
 # 권한
@@ -4291,10 +4302,8 @@ def random_chat_reply_for_user(user_name):
         return None
 
     roll = random.randint(1, 1000)
-    if roll == 1:
-        return "아 불꽃아다다"
     if roll <= 6:
-        return "아 아다다"
+        return ADADA_CHANT_REPLY
     return None
 
 
@@ -4304,7 +4313,7 @@ def meat_shout_reply_for_user(user_name, text_value):
     is_areum_recite = text_value == "읊어라" and nickname_matches_any_target(user_name, AREUM_RECITE_REPLY_TARGETS)
     if not (is_meat_shout or is_areum_recite):
         return None
-    return random.choice(["아 아다다"] * 5 + ["아 불꽃아다다"])
+    return ADADA_CHANT_REPLY
 
 
 def should_reply_bulja_full_ownership_image(user_name, text_value):
