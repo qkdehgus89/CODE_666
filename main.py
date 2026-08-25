@@ -136,6 +136,7 @@ SPECIAL_CHAT_REPLY_MESSAGES = [
     "넌 못벗어나 가오해줘",
     "아헤가오해줘",
 ]
+RANDOM_CHAT_REPLY_TARGETS = {"으앙"}
 
 # =========================
 # 권한
@@ -4234,24 +4235,38 @@ def display_nickname(user_name):
     return normalize_mention_name(user_name) or str(user_name or "").strip()
 
 
-def special_chat_reply_for_user(user_name, text_value):
-    if not is_special_chat_reply_enabled():
-        return None
-
-    text_value = str(text_value or "").strip()
-    if not text_value or text_value.startswith("/"):
-        return None
-
+def nickname_matches_any_target(user_name, targets):
     tokens = set(nickname_tokens(user_name))
     display = normalize_mention_name(user_name)
     if display:
         tokens.add(display)
 
     normalized_name = normalize_match_text(user_name)
-    if tokens & SPECIAL_CHAT_REPLY_TARGETS or any(target in normalized_name for target in SPECIAL_CHAT_REPLY_TARGETS):
+    return bool(tokens & targets or any(target in normalized_name for target in targets))
+
+
+def random_chat_reply_for_user(user_name):
+    if not nickname_matches_any_target(user_name, RANDOM_CHAT_REPLY_TARGETS):
+        return None
+
+    roll = random.randint(1, 1000)
+    if roll == 1:
+        return "아 불꽃아다다"
+    if roll <= 6:
+        return "아 아다다"
+    return None
+
+
+def special_chat_reply_for_user(user_name, text_value):
+    text_value = str(text_value or "").strip()
+    if not text_value or text_value.startswith("/"):
+        return None
+
+    if is_special_chat_reply_enabled() and nickname_matches_any_target(user_name, SPECIAL_CHAT_REPLY_TARGETS):
         messages = special_chat_reply_messages()
         return random.choice(messages) if messages else None
-    return None
+
+    return random_chat_reply_for_user(user_name)
 
 
 def row_value(row, key, default=None):
