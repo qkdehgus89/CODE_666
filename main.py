@@ -139,6 +139,7 @@ SPECIAL_CHAT_REPLY_MESSAGES = [
 ]
 RANDOM_CHAT_REPLY_TARGETS = {"으앙"}
 MEAT_SHOUT_REPLY_TARGETS = {"미트"}
+AREUM_RECITE_REPLY_TARGETS = {"아름"}
 BULJA_IMAGE_REPLY_TARGETS = {"불자"}
 BULJA_FULL_OWNERSHIP_IMAGE_PATH = "static/bulja_full_ownership.jpg"
 
@@ -4298,9 +4299,10 @@ def random_chat_reply_for_user(user_name):
 
 
 def meat_shout_reply_for_user(user_name, text_value):
-    if str(text_value or "").strip() != "외쳐라":
-        return None
-    if not nickname_matches_any_target(user_name, MEAT_SHOUT_REPLY_TARGETS):
+    text_value = str(text_value or "").strip()
+    is_meat_shout = text_value == "외쳐라" and nickname_matches_any_target(user_name, MEAT_SHOUT_REPLY_TARGETS)
+    is_areum_recite = text_value == "읊어라" and nickname_matches_any_target(user_name, AREUM_RECITE_REPLY_TARGETS)
+    if not (is_meat_shout or is_areum_recite):
         return None
     return random.choice(["아 아다다"] * 5 + ["아 불꽃아다다"])
 
