@@ -137,6 +137,7 @@ SPECIAL_CHAT_REPLY_MESSAGES = [
     "아헤가오해줘",
 ]
 RANDOM_CHAT_REPLY_TARGETS = {"으앙"}
+MEAT_SHOUT_REPLY_TARGETS = {"미트"}
 
 # =========================
 # 권한
@@ -4257,10 +4258,22 @@ def random_chat_reply_for_user(user_name):
     return None
 
 
+def meat_shout_reply_for_user(user_name, text_value):
+    if str(text_value or "").strip() != "외쳐라":
+        return None
+    if not nickname_matches_any_target(user_name, MEAT_SHOUT_REPLY_TARGETS):
+        return None
+    return random.choice(["아 아다다"] * 5 + ["아 불꽃아다다"])
+
+
 def special_chat_reply_for_user(user_name, text_value):
     text_value = str(text_value or "").strip()
     if not text_value or text_value.startswith("/"):
         return None
+
+    shout_reply = meat_shout_reply_for_user(user_name, text_value)
+    if shout_reply:
+        return shout_reply
 
     if is_special_chat_reply_enabled() and nickname_matches_any_target(user_name, SPECIAL_CHAT_REPLY_TARGETS):
         messages = special_chat_reply_messages()
