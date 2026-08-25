@@ -153,6 +153,11 @@ ADADA_CHANT_REPLY = """.　　　　\\　　　|
 　　╱　　　 　　\\　　╲
 　　　　　/　|　　\\\\
 　　　　 　　|"""
+AREUM_RECITE_REPLY = """╭ ◜◝ ͡ ◜◝ ͡  ◜◝ ╮
+　기므앙아다다
+╰ ◟◞ ͜  ◟ ͜   ◟◞ ╯
+                    O
+                        °."""
 
 # =========================
 # 권한
@@ -4313,6 +4318,8 @@ def meat_shout_reply_for_user(user_name, text_value):
     text_value = str(text_value or "").strip()
     is_meat_shout = text_value == "외쳐라" and nickname_matches_any_target(user_name, MEAT_SHOUT_REPLY_TARGETS)
     is_areum_recite = text_value == "읊어라" and nickname_matches_any_target(user_name, AREUM_RECITE_REPLY_TARGETS)
+    if is_areum_recite:
+        return AREUM_RECITE_REPLY
     if not (is_meat_shout or is_areum_recite):
         return None
     return ADADA_CHANT_REPLY
