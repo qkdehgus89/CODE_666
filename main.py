@@ -4302,10 +4302,10 @@ def random_chat_reply_for_user(user_name):
         return None
 
     roll = random.randint(1, 1000)
-    if roll == 1:
-        return "아 불꽃아다다"
-    if roll <= 6:
-        return "아 아다다"
+    if roll <= 5:
+        return "아! 불꽃아다다!!!"
+    if roll <= 10:
+        return "(아 아다다)"
     return None
 
 
