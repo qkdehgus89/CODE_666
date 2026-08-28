@@ -142,6 +142,7 @@ MEAT_SHOUT_REPLY_TARGETS = {"미트"}
 AREUM_RECITE_REPLY_TARGETS = {"아름"}
 BULJA_IMAGE_REPLY_TARGETS = {"불자"}
 BULJA_FULL_OWNERSHIP_IMAGE_PATH = "static/bulja_full_ownership.jpg"
+MEAT_ATTENDANCE_TARGETS = {"미트"}
 ADADA_CHANT_REPLY = """.　　　　\\　　　|
 　╲　　　　　　　　　　　╱
 　　　　　\\　　　　/
@@ -7783,6 +7784,81 @@ def attendance_streak_days(user_id, date_str):
         return 0
 
     return (base - first_date).days + 1
+
+
+def parse_attendance_base_date(value, date_str):
+    value = strip_coin_suffix(str(value or "")).strip()
+    if not value or value == "-":
+        return None
+
+    base_year = datetime.strptime(date_str, "%Y-%m-%d").year
+    candidates = [value]
+    compact_match = re.search(r"(\d{1,2})[./-](\d{1,2})", value)
+    if compact_match:
+        candidates.append(f"{base_year}-{int(compact_match.group(1)):02d}-{int(compact_match.group(2)):02d}")
+
+    for candidate in candidates:
+        candidate = candidate.strip()
+        for fmt in ("%Y-%m-%d", "%y.%m.%d", "%m.%d", "%m-%d", "%m/%d"):
+            try:
+                if fmt in ("%m.%d", "%m-%d", "%m/%d"):
+                    parsed = datetime.strptime(f"{base_year}-{candidate.replace('.', '-').replace('/', '-')}", "%Y-%m-%d")
+                else:
+                    parsed = datetime.strptime(candidate, fmt)
+                return parsed.date()
+            except Exception:
+                pass
+    return None
+
+
+def genealogy_join_date_for_user(user_id):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT profile_join_date
+    FROM genealogy_profiles
+    WHERE user_id = ?
+    """, (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row["profile_join_date"] if row and row["profile_join_date"] else ""
+
+
+def first_attendance_date_for_user(user_id):
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT MIN(date) AS first_date
+    FROM attendance
+    WHERE user_id = ?
+    """, (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row["first_date"] if row and row["first_date"] else ""
+
+
+def meat_attendance_days(user_id, user_name, date_str):
+    if not nickname_matches_any_target(user_name, MEAT_ATTENDANCE_TARGETS):
+        return None
+
+    base = datetime.strptime(date_str, "%Y-%m-%d").date()
+    join_values = [
+        genealogy_join_date_for_user(user_id),
+        get_bot_setting("meat_join_date", ""),
+        first_attendance_date_for_user(user_id),
+    ]
+    for value in join_values:
+        join_date = parse_attendance_base_date(value, date_str)
+        if join_date and join_date <= base:
+            return (base - join_date).days + 1
+    return None
+
+
+def attendance_display_days(user_id, user_name, date_str):
+    meat_days = meat_attendance_days(user_id, user_name, date_str)
+    if meat_days:
+        return meat_days
+    return attendance_streak_days(user_id, date_str)
 
 
 def mark_legacy_attendance_streak_reward_claimed(user_id, user_name, streak_days, reward):
@@ -16431,17 +16507,19 @@ def handle(event):
 
     if text == "/출석":
         ok, _ = attendance_check(date_str, user_id, user_name)
+        try:
+            streak = attendance_display_days(user_id, user_name, date_str)
+        except Exception as e:
+            log_error("ATTENDANCE_DISPLAY_DAYS_ERROR", e)
+            streak = 1 if ok else 0
+
+        if nickname_matches_any_target(user_name, MEAT_ATTENDANCE_TARGETS) and streak > 0:
+            reply(event.reply_token, f"✅ 출석 확인\n\n{user_name}님\n\n{streak}일차")
+            return
+
         if ok:
-            try:
-                streak = attendance_streak_days(user_id, date_str)
-            except Exception:
-                streak = 1
             reply(event.reply_token, f"✅ 출석 완료\n\n{user_name}님\n\n{streak}일차 출석완료")
         else:
-            try:
-                streak = attendance_streak_days(user_id, date_str)
-            except Exception:
-                streak = 0
             streak_text = f"\n\n{streak}일차 출석완료" if streak > 0 else ""
             reply(event.reply_token, f"이미 오늘 출석했습니다.{streak_text}")
         return
