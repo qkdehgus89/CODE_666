@@ -2664,6 +2664,7 @@ def beginner_guide_text():
 /되는단어 단어
 /되는단어삭제 단어
 /되는단어목록
+/감점 단어
 /안되는단어 단어
 /안되는단어수정 기존단어 새단어
 /안되는단어삭제 단어
@@ -2769,6 +2770,7 @@ def all_commands_text():
 /되는단어 단어
 /되는단어삭제 단어
 /되는단어목록
+/감점 단어
 /안되는단어 단어
 /안되는단어수정 기존단어 새단어
 /안되는단어삭제 단어
@@ -4916,6 +4918,61 @@ def hunmin_blocked_words_text():
     for idx, row in enumerate(rows, 1):
         reason = f" - {row['reason']}" if row["reason"] else ""
         lines.append(f"{idx}. {row['word']}{reason}")
+    return "\n".join(lines)
+
+
+def hunmin_penalty_word(arg, source_id, user_id, user_name):
+    word = normalize_hunmin_word(arg)
+    if len(word) < 2:
+        return "사용법: /감점 단어\n예: /감점 랴뱌"
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT id
+    FROM hunmin_games
+    WHERE source_id = ?
+    ORDER BY id DESC
+    LIMIT 1
+    """, (source_id,))
+    game = cur.fetchone()
+    game_id = int(game["id"]) if game else None
+
+    cur.execute("""
+    INSERT INTO hunmin_blocked_words (
+        word, reason, created_by_user_id, created_by_user_name, created_at, updated_at
+    ) VALUES (?, '훈민정음 감점 처리', ?, ?, ?, ?)
+    ON CONFLICT(word)
+    DO UPDATE SET
+        reason = excluded.reason,
+        created_by_user_id = excluded.created_by_user_id,
+        created_by_user_name = excluded.created_by_user_name,
+        updated_at = excluded.updated_at
+    """, (word, user_id, user_name, now_str(), now_str()))
+    cur.execute("DELETE FROM hunmin_allowed_words WHERE word = ?", (word,))
+
+    if game_id:
+        cur.execute("DELETE FROM hunmin_answers WHERE game_id = ? AND word = ?", (game_id, word))
+        removed = cur.rowcount
+    else:
+        cur.execute("DELETE FROM hunmin_answers WHERE word = ?", (word,))
+        removed = cur.rowcount
+
+    conn.commit()
+    conn.close()
+
+    lines = [
+        "🧹 훈민정음 감점 처리",
+        "",
+        f"제외 단어: {word}",
+        "안되는단어로 자동 등록했습니다.",
+    ]
+    if removed:
+        lines.append(f"인정 기록 {removed}건을 제외했습니다.")
+    if game_id:
+        lines += ["", hunmin_game_result_text(game_id)]
+    else:
+        lines += ["", "최근 훈민정음 게임 기록은 찾지 못했어요."]
     return "\n".join(lines)
 
 
@@ -16130,6 +16187,11 @@ def handle(event):
         reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices + [hunmin_allowed_words_text()]))))
         return
 
+    if text == "/감점" or text.startswith("/감점 "):
+        msg = hunmin_penalty_word(text.replace("/감점", "", 1).strip(), source_id, user_id, user_name)
+        reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices + [msg]))))
+        return
+
     if text == "/안되는단어" or text.startswith("/안되는단어 "):
         msg = add_hunmin_blocked_word(text.replace("/안되는단어", "", 1).strip(), user_id, user_name)
         reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices + [msg]))))
@@ -17195,13 +17257,13 @@ def handle(event):
         "/출석", "/주사위", "/동전던지기", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/동전듀얼", "/수락", "/거절", "/듀얼취소",
         "/눈치게임", "/포춘쿠키", "/코드쿠키", "/메뉴추천", "/코드메이트",
         "/훈민정음", "/훈민결과", "/되는단어", "/되는단어삭제", "/되는단어목록",
-        "/안되는단어", "/안되는단어수정", "/안되는단어삭제", "/안되는단어목록",
+        "/감점", "/안되는단어", "/안되는단어수정", "/안되는단어삭제", "/안되는단어목록",
         "/명령어", "/가이드",
     }
     enabled_user_prefixes = (
         "/하이듀얼 ", "/로우듀얼 ", "/동전듀얼 ",
         "/훈민정음 ", "/되는단어 ", "/되는단어삭제 ",
-        "/안되는단어 ", "/안되는단어수정 ", "/안되는단어삭제 ",
+        "/감점 ", "/안되는단어 ", "/안되는단어수정 ", "/안되는단어삭제 ",
     )
     if text.startswith("/") and text not in enabled_user_commands and not any(text.startswith(prefix) for prefix in enabled_user_prefixes):
         return
