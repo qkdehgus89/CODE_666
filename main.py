@@ -11,6 +11,11 @@ from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from flask import Flask, request, abort
 
+try:
+    from kiwipiepy import Kiwi
+except Exception:
+    Kiwi = None
+
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
@@ -150,6 +155,12 @@ HUNMIN_INITIALS = [
     "ㅇㄹ", "ㅈㄱ", "ㅊㅅ", "ㅋㅌ", "ㅎㅌ",
 ]
 HUNMIN_CHOSEONG = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+HUNMIN_JUNGSEONG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
+HUNMIN_JONGSEONG = ["", "ㄱ", "ㄲ", "ㄳ", "ㄴ", "ㄵ", "ㄶ", "ㄷ", "ㄹ", "ㄺ", "ㄻ", "ㄼ", "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅁ", "ㅂ", "ㅄ", "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ"]
+HUNMIN_AWKWARD_OPEN_VOWELS = {"ㅑ", "ㅒ", "ㅕ", "ㅖ", "ㅛ", "ㅠ"}
+HUNMIN_AWKWARD_OPEN_INITIALS = {"ㄹ", "ㅂ", "ㅃ", "ㅅ", "ㅆ", "ㅈ", "ㅉ", "ㅊ", "ㅋ", "ㅌ", "ㅍ"}
+HUNMIN_VALID_POS_PREFIXES = ("N", "V", "M", "XR", "IC", "SL", "SN")
+_HUNMIN_KIWI = None
 ADADA_CHANT_REPLY = """.　　　　\\　　　|
 　╲　　　　　　　　　　　╱
 　　　　　\\　　　　/
@@ -193,6 +204,7 @@ def is_operator_command(text):
         "/주의유저", "/블랙리스트", "/블랙추가", "/블랙삭제",
         "/주사위", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/동전듀얼", "/수락", "/거절", "/듀얼취소", "/코드메이트", "/코드메이트초기화",
         "/훈민정음", "/훈민초성목록", "/훈민초성추가", "/훈민초성삭제",
+        "/훈민결과",
         "/주라 온", "/주라 오프", "/주라온", "/주라오프",
         "/마디수", "/전체마디수", "/특정마디수",
         "/삭제유저", "/경제현황", "/럭키정산", "/럭키초기화", "/럭키현황전체",
@@ -278,6 +290,7 @@ def is_enabled_operator_command(text):
         "/코드메이트",
         "/코드메이트초기화",
         "/훈민정음",
+        "/훈민결과",
         "/훈민초성목록",
         "/훈민초성추가",
         "/훈민초성삭제",
@@ -756,9 +769,33 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS hunmin_submissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_id INTEGER NOT NULL,
+        source_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        word TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(game_id, user_id, word)
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS hunmin_blocked_words (
         word TEXT PRIMARY KEY,
         reason TEXT,
+        created_by_user_id TEXT,
+        created_by_user_name TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS hunmin_allowed_words (
+        word TEXT PRIMARY KEY,
+        memo TEXT,
         created_by_user_id TEXT,
         created_by_user_name TEXT,
         created_at TEXT NOT NULL,
@@ -2623,6 +2660,10 @@ def beginner_guide_text():
 /눈치게임
 /훈민정음
 /훈민정음 ㄱㅁ
+/훈민결과
+/되는단어 단어
+/되는단어삭제 단어
+/되는단어목록
 /안되는단어 단어
 /안되는단어수정 기존단어 새단어
 /안되는단어삭제 단어
@@ -2724,6 +2765,10 @@ def all_commands_text():
 /눈치게임
 /훈민정음
 /훈민정음 ㄱㅁ
+/훈민결과
+/되는단어 단어
+/되는단어삭제 단어
+/되는단어목록
 /안되는단어 단어
 /안되는단어수정 기존단어 새단어
 /안되는단어삭제 단어
@@ -4347,6 +4392,113 @@ def hunmin_word_initials(word):
     return "".join(initials)
 
 
+def hunmin_word_is_allowed(word):
+    word = normalize_hunmin_word(word)
+    if not word:
+        return False
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM hunmin_allowed_words WHERE word = ?", (word,))
+    row = cur.fetchone()
+    conn.close()
+    return bool(row)
+
+
+def hunmin_word_is_blocked(word):
+    word = normalize_hunmin_word(word)
+    if not word:
+        return False
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM hunmin_blocked_words WHERE word = ?", (word,))
+    row = cur.fetchone()
+    conn.close()
+    return bool(row)
+
+
+def hunmin_kiwi():
+    global _HUNMIN_KIWI
+    if Kiwi is None:
+        return None
+    if _HUNMIN_KIWI is None:
+        _HUNMIN_KIWI = Kiwi()
+    return _HUNMIN_KIWI
+
+
+def hunmin_dictionary_accepts(word):
+    word = normalize_hunmin_word(word)
+    if hunmin_word_is_allowed(word):
+        return True
+    kiwi = hunmin_kiwi()
+    if kiwi is None:
+        return True
+
+    try:
+        analyzed = kiwi.analyze(word, top_n=1)
+        if not analyzed:
+            return False
+        tokens = analyzed[0][0]
+        if not tokens:
+            return False
+        joined = "".join(token.form for token in tokens)
+        if joined != word:
+            return False
+        if any(getattr(token, "oov", False) for token in tokens):
+            return False
+        return any(str(token.tag).startswith(HUNMIN_VALID_POS_PREFIXES) for token in tokens)
+    except Exception as e:
+        log_error("HUNMIN_DICTIONARY_ERROR", e)
+        return True
+
+
+def hunmin_syllable_parts(ch):
+    code = ord(ch)
+    if not (0xAC00 <= code <= 0xD7A3):
+        return None
+    offset = code - 0xAC00
+    return {
+        "initial": HUNMIN_CHOSEONG[offset // 588],
+        "vowel": HUNMIN_JUNGSEONG[(offset % 588) // 28],
+        "final": HUNMIN_JONGSEONG[offset % 28],
+    }
+
+
+def hunmin_word_reject_reason(word):
+    word = normalize_hunmin_word(word)
+    if len(word) < 2:
+        return "2글자 이상만 인정됩니다."
+    if hunmin_word_is_blocked(word):
+        return "안되는 단어로 등록되어 있어요."
+    if hunmin_word_is_allowed(word):
+        return ""
+
+    parts = [hunmin_syllable_parts(ch) for ch in word]
+    if any(part is None for part in parts):
+        return "한글 단어만 인정됩니다."
+
+    awkward_open = [
+        part for part in parts
+        if (
+            not part["final"]
+            and part["vowel"] in HUNMIN_AWKWARD_OPEN_VOWELS
+            and part["initial"] in HUNMIN_AWKWARD_OPEN_INITIALS
+        )
+    ]
+    if len(parts) <= 3 and len(awkward_open) >= 2:
+        return "억지로 만든 말처럼 보여서 인정하지 않을게요."
+
+    if len(parts) == len(awkward_open):
+        return "억지로 만든 말처럼 보여서 인정하지 않을게요."
+
+    if len(set(word)) == 1:
+        return "같은 글자 반복은 인정하지 않을게요."
+
+    if not hunmin_dictionary_accepts(word):
+        return "사전에 없는 말이라 인정하지 않을게요."
+
+    return ""
+
+
 def active_hunmin_initial_rows():
     conn = db()
     cur = conn.cursor()
@@ -4438,14 +4590,51 @@ def hunmin_game_result_text(game_id):
         return "🔤 훈민정음 종료\n\n게임 정보를 찾지 못했어요."
 
     cur.execute("""
-    SELECT user_id, user_name, COUNT(*) AS score
-    FROM hunmin_answers
+    SELECT id, user_id, user_name, word
+    FROM hunmin_submissions
     WHERE game_id = ?
-    GROUP BY user_id, user_name
-    ORDER BY score DESC, MIN(id) ASC
+    ORDER BY id ASC
     """, (game_id,))
-    rows = cur.fetchall()
+    submission_rows = cur.fetchall()
+
+    if not submission_rows:
+        cur.execute("""
+        SELECT id, user_id, user_name, word
+        FROM hunmin_answers
+        WHERE game_id = ?
+        ORDER BY id ASC
+        """, (game_id,))
+        submission_rows = cur.fetchall()
     conn.close()
+
+    word_seen = set()
+    score_by_user = {}
+    order_by_user = {}
+    name_by_user = {}
+    for row in submission_rows:
+        word = normalize_hunmin_word(row["word"])
+        if not word or word in word_seen:
+            continue
+        if hunmin_word_initials(word) != game["initials"]:
+            continue
+        if hunmin_word_reject_reason(word):
+            continue
+        word_seen.add(word)
+        user_key = row["user_id"]
+        score_by_user[user_key] = score_by_user.get(user_key, 0) + 1
+        order_by_user.setdefault(user_key, int(row["id"]))
+        name_by_user[user_key] = row["user_name"]
+
+    rows = [
+        {
+            "user_id": user_id,
+            "user_name": name_by_user.get(user_id, ""),
+            "score": score,
+            "first_id": order_by_user.get(user_id, 0),
+        }
+        for user_id, score in score_by_user.items()
+    ]
+    rows.sort(key=lambda row: (-int(row["score"] or 0), int(row["first_id"] or 0)))
 
     lines = ["🔤 훈민정음 종료", "", f"초성: {game['initials']}", ""]
     if not rows:
@@ -4473,6 +4662,28 @@ def hunmin_game_result_text(game_id):
     for idx, row in enumerate(rows[:10], 1):
         lines.append(f"{idx}. {display_nickname(row['user_name'])}님 - {row['score']}개")
     return "\n".join(lines)
+
+
+def latest_hunmin_game_result_text(source_id):
+    if not source_id or source_id not in count_source_ids():
+        return "훈민결과는 공창이나 운영방에서 확인할 수 있어요."
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT id, status
+    FROM hunmin_games
+    WHERE source_id = ?
+    ORDER BY id DESC
+    LIMIT 1
+    """, (source_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return "🔤 훈민정음 결과\n\n아직 진행된 게임이 없어요."
+    prefix = "현재 기준 재집계입니다."
+    if row["status"] == "active":
+        prefix = "아직 진행 중인 게임의 현재 기준 집계입니다."
+    return f"{prefix}\n\n{hunmin_game_result_text(int(row['id']))}"
 
 
 def expire_stale_hunmin_games(source_id):
@@ -4549,7 +4760,8 @@ def hunmin_game_start(source_id, user_id, user_name, initials=""):
         f"초성: {initials}\n"
         f"제한시간: {HUNMIN_GAME_SECONDS}초\n\n"
         "초성에 맞는 단어를 채팅으로 입력해 주세요.\n"
-        "같은 단어는 1번만 인정됩니다.\n\n"
+        "사전 기준 단어만 인정되고, 같은 단어는 1번만 인정됩니다.\n\n"
+        "수정: /되는단어 단어, /안되는단어 단어\n\n"
         "가장 많이 맞춘 사람이 한 사람을 지목합니다."
     )
 
@@ -4579,10 +4791,20 @@ def process_hunmin_answer(source_id, user_id, user_name, text_value):
 
     conn = db()
     cur = conn.cursor()
-    cur.execute("SELECT 1 FROM hunmin_blocked_words WHERE word = ?", (word,))
-    if cur.fetchone():
+    try:
+        cur.execute("""
+        INSERT OR IGNORE INTO hunmin_submissions (
+            game_id, source_id, user_id, user_name, word, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """, (game["id"], source_id, user_id, user_name, word, now_str()))
+        conn.commit()
+    except Exception as e:
+        log_error("HUNMIN_SUBMISSION_LOG_ERROR", e)
+
+    reject_reason = hunmin_word_reject_reason(word)
+    if reject_reason:
         conn.close()
-        return None
+        return f"🤔 {word}\n{reject_reason}"
 
     try:
         cur.execute("""
@@ -4627,6 +4849,7 @@ def add_hunmin_blocked_word(arg, user_id, user_name):
         created_by_user_name = excluded.created_by_user_name,
         updated_at = excluded.updated_at
     """, (word, reason, user_id, user_name, now_str(), now_str()))
+    cur.execute("DELETE FROM hunmin_allowed_words WHERE word = ?", (word,))
     cur.execute("DELETE FROM hunmin_answers WHERE word = ?", (word,))
     conn.commit()
     conn.close()
@@ -4693,6 +4916,67 @@ def hunmin_blocked_words_text():
     for idx, row in enumerate(rows, 1):
         reason = f" - {row['reason']}" if row["reason"] else ""
         lines.append(f"{idx}. {row['word']}{reason}")
+    return "\n".join(lines)
+
+
+def add_hunmin_allowed_word(arg, user_id, user_name):
+    parts = str(arg or "").strip().split(maxsplit=1)
+    if not parts:
+        return "사용법: /되는단어 단어\n예: /되는단어 갠라"
+    word = normalize_hunmin_word(parts[0])
+    memo = parts[1].strip() if len(parts) > 1 else ""
+    if len(word) < 2:
+        return "인정할 단어는 2글자 이상으로 입력해 주세요."
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT INTO hunmin_allowed_words (
+        word, memo, created_by_user_id, created_by_user_name, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(word)
+    DO UPDATE SET
+        memo = excluded.memo,
+        created_by_user_id = excluded.created_by_user_id,
+        created_by_user_name = excluded.created_by_user_name,
+        updated_at = excluded.updated_at
+    """, (word, memo, user_id, user_name, now_str(), now_str()))
+    cur.execute("DELETE FROM hunmin_blocked_words WHERE word = ?", (word,))
+    conn.commit()
+    conn.close()
+    detail = f"\n메모: {memo}" if memo else ""
+    return f"✅ 되는 단어 등록 완료\n\n{word}{detail}\n\n/훈민결과 로 최근 게임을 다시 확인할 수 있어요."
+
+
+def delete_hunmin_allowed_word(arg):
+    word = normalize_hunmin_word(arg)
+    if len(word) < 2:
+        return "사용법: /되는단어삭제 단어"
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM hunmin_allowed_words WHERE word = ?", (word,))
+    changed = cur.rowcount
+    conn.commit()
+    conn.close()
+    return f"✅ 되는 단어 삭제 완료\n\n{word}" if changed else "해당 단어를 찾지 못했어요."
+
+
+def hunmin_allowed_words_text():
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT word, memo
+    FROM hunmin_allowed_words
+    ORDER BY updated_at DESC, word ASC
+    LIMIT 100
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    if not rows:
+        return "✅ 되는 단어 목록\n\n아직 등록된 단어가 없어요."
+    lines = ["✅ 되는 단어 목록", ""]
+    for idx, row in enumerate(rows, 1):
+        memo = f" - {row['memo']}" if row["memo"] else ""
+        lines.append(f"{idx}. {row['word']}{memo}")
     return "\n".join(lines)
 
 
@@ -15828,6 +16112,24 @@ def handle(event):
         reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices + [msg]))))
         return
 
+    if text == "/훈민결과":
+        reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices + [latest_hunmin_game_result_text(source_id)]))))
+        return
+
+    if text == "/되는단어" or text.startswith("/되는단어 "):
+        msg = add_hunmin_allowed_word(text.replace("/되는단어", "", 1).strip(), user_id, user_name)
+        reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices + [msg]))))
+        return
+
+    if text == "/되는단어삭제" or text.startswith("/되는단어삭제 "):
+        msg = delete_hunmin_allowed_word(text.replace("/되는단어삭제", "", 1).strip())
+        reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices + [msg]))))
+        return
+
+    if text == "/되는단어목록":
+        reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices + [hunmin_allowed_words_text()]))))
+        return
+
     if text == "/안되는단어" or text.startswith("/안되는단어 "):
         msg = add_hunmin_blocked_word(text.replace("/안되는단어", "", 1).strip(), user_id, user_name)
         reply_many(event.reply_token, split_text_messages("\n\n".join(dict.fromkeys(public_notices + [msg]))))
@@ -16087,7 +16389,7 @@ def handle(event):
         conn = db()
         cur = conn.cursor()
         counts = []
-        for table in ["users", "counts", "genealogy_profiles", "micl_referrals", "currency", "currency_logs", "revival_claims", "purchases", "attendance", "danbung_attendance", "mission_claims", "weekly_rewards", "settlement_runs", "bot_errors", "manitto_assignments", "affinity_scores", "mention_logs", "heart_picks", "heart_pick_rewards", "sns_lucky_draw_entries", "sns_lucky_draw_results", "sns_lucky_draw_prizes", "chemistry_signals", "chemistry_rewards", "public_announcements", "nunchi_games", "hunmin_initials", "hunmin_games", "hunmin_answers", "hunmin_blocked_words", "truth_game_sessions", "truth_game_questions", "truth_game_resets"]:
+        for table in ["users", "counts", "genealogy_profiles", "micl_referrals", "currency", "currency_logs", "revival_claims", "purchases", "attendance", "danbung_attendance", "mission_claims", "weekly_rewards", "settlement_runs", "bot_errors", "manitto_assignments", "affinity_scores", "mention_logs", "heart_picks", "heart_pick_rewards", "sns_lucky_draw_entries", "sns_lucky_draw_results", "sns_lucky_draw_prizes", "chemistry_signals", "chemistry_rewards", "public_announcements", "nunchi_games", "hunmin_initials", "hunmin_games", "hunmin_submissions", "hunmin_answers", "hunmin_allowed_words", "hunmin_blocked_words", "truth_game_sessions", "truth_game_questions", "truth_game_resets"]:
             try:
                 cur.execute(f"SELECT COUNT(*) AS cnt FROM {table}")
                 counts.append(f"{table}: {cur.fetchone()['cnt']}")
@@ -16892,12 +17194,14 @@ def handle(event):
     enabled_user_commands = {
         "/출석", "/주사위", "/동전던지기", "/주사위듀얼", "/하이듀얼", "/로우듀얼", "/동전듀얼", "/수락", "/거절", "/듀얼취소",
         "/눈치게임", "/포춘쿠키", "/코드쿠키", "/메뉴추천", "/코드메이트",
-        "/훈민정음", "/안되는단어", "/안되는단어수정", "/안되는단어삭제", "/안되는단어목록",
+        "/훈민정음", "/훈민결과", "/되는단어", "/되는단어삭제", "/되는단어목록",
+        "/안되는단어", "/안되는단어수정", "/안되는단어삭제", "/안되는단어목록",
         "/명령어", "/가이드",
     }
     enabled_user_prefixes = (
         "/하이듀얼 ", "/로우듀얼 ", "/동전듀얼 ",
-        "/훈민정음 ", "/안되는단어 ", "/안되는단어수정 ", "/안되는단어삭제 ",
+        "/훈민정음 ", "/되는단어 ", "/되는단어삭제 ",
+        "/안되는단어 ", "/안되는단어수정 ", "/안되는단어삭제 ",
     )
     if text.startswith("/") and text not in enabled_user_commands and not any(text.startswith(prefix) for prefix in enabled_user_prefixes):
         return
