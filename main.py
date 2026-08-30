@@ -149,6 +149,7 @@ BULJA_IMAGE_REPLY_TARGETS = {"불자"}
 BULJA_FULL_OWNERSHIP_IMAGE_PATH = "static/bulja_full_ownership.jpg"
 MEAT_ATTENDANCE_TARGETS = {"미트"}
 HUNMIN_GAME_SECONDS = 60
+HUNMIN_FEATURE_ENABLED = False
 HUNMIN_INITIALS = [
     "ㄱㅁ", "ㄴㄱ", "ㄷㅂ", "ㄹㅂ", "ㅁㄷ", "ㅂㄱ", "ㅅㄹ", "ㅇㅈ", "ㅈㅅ", "ㅊㄱ",
     "ㅋㄷ", "ㅌㅅ", "ㅍㅅ", "ㅎㄱ", "ㄱㄹ", "ㄴㅅ", "ㄷㄷ", "ㅁㅌ", "ㅂㅂ", "ㅅㅅ",
@@ -379,6 +380,28 @@ def is_unreleased_play_command(text):
         text in {"/주사위듀얼", "/코드메이트"}
         or text.startswith("/주사위듀얼 ")
     )
+
+
+def is_hunmin_command(text):
+    if not text:
+        return False
+    exact_commands = {
+        "/훈민정음", "/훈민결과",
+        "/되는단어", "/되는단어삭제", "/되는단어목록",
+        "/감점",
+        "/안되는단어", "/안되는단어수정", "/안되는단어삭제", "/안되는단어목록",
+        "/훈민초성목록", "/훈민초성추가", "/훈민초성삭제",
+    }
+    prefix_commands = (
+        "/훈민정음 ", "/되는단어 ", "/되는단어삭제 ",
+        "/감점 ", "/안되는단어 ", "/안되는단어수정 ", "/안되는단어삭제 ",
+        "/훈민초성추가 ", "/훈민초성삭제 ",
+    )
+    return text in exact_commands or any(text.startswith(prefix) for prefix in prefix_commands)
+
+
+def hunmin_paused_text():
+    return "🔤 훈민정음 게임은 잠시 쉬는 중이에요.\n\n다시 열 때 바로 켤 수 있게 기록은 그대로 남겨뒀습니다."
 
 
 def count_source_ids():
@@ -2658,17 +2681,6 @@ def beginner_guide_text():
 /거절
 /듀얼취소
 /눈치게임
-/훈민정음
-/훈민정음 ㄱㅁ
-/훈민결과
-/되는단어 단어
-/되는단어삭제 단어
-/되는단어목록
-/감점 단어
-/안되는단어 단어
-/안되는단어수정 기존단어 새단어
-/안되는단어삭제 단어
-/안되는단어목록
 /포춘쿠키
 /코드쿠키
 /메뉴추천
@@ -2689,9 +2701,6 @@ def operator_commands_text():
 /주라 온
 /주라 오프
 /주라코드 대사
-/훈민초성목록
-/훈민초성추가 ㄱㅁ
-/훈민초성삭제 ㄱㅁ
 
 ━━━━━━━━━━
 👤 유저 관리
@@ -2764,17 +2773,6 @@ def all_commands_text():
 /동전던지기
 /동전듀얼 닉네임
 /눈치게임
-/훈민정음
-/훈민정음 ㄱㅁ
-/훈민결과
-/되는단어 단어
-/되는단어삭제 단어
-/되는단어목록
-/감점 단어
-/안되는단어 단어
-/안되는단어수정 기존단어 새단어
-/안되는단어삭제 단어
-/안되는단어목록
 /포춘쿠키
 /코드쿠키
 /메뉴추천
@@ -2786,9 +2784,6 @@ def all_commands_text():
 /전체명령어
 /운영방
 /운영방해제
-/훈민초성목록
-/훈민초성추가 ㄱㅁ
-/훈민초성삭제 ㄱㅁ
 
 👤 유저 관리
 /전체유저
@@ -16055,13 +16050,15 @@ def handle(event):
                         public_notices.append(join_profile_msg)
                 process_mentions(date_str, source_id, user_id, user_name, message_text)
                 public_notices.extend(expire_stale_nunchi_games(source_id))
-                public_notices.extend(expire_stale_hunmin_games(source_id))
+                if HUNMIN_FEATURE_ENABLED:
+                    public_notices.extend(expire_stale_hunmin_games(source_id))
                 nunchi_msg = process_nunchi_number(source_id, user_id, user_name, message_text)
                 if nunchi_msg:
                     public_notices.append(nunchi_msg)
-                hunmin_msg = process_hunmin_answer(source_id, user_id, user_name, message_text)
-                if hunmin_msg:
-                    public_notices.append(hunmin_msg)
+                if HUNMIN_FEATURE_ENABLED:
+                    hunmin_msg = process_hunmin_answer(source_id, user_id, user_name, message_text)
+                    if hunmin_msg:
+                        public_notices.append(hunmin_msg)
         except Exception as e:
             log_error("TEXT_PROCESS_ERROR", e)
 
@@ -16100,6 +16097,10 @@ def handle(event):
 
     if is_unreleased_play_command(text) and not is_operator_room(source_id):
         reply(event.reply_token, "추후 공개됩니다")
+        return
+
+    if is_hunmin_command(text) and not HUNMIN_FEATURE_ENABLED:
+        reply(event.reply_token, hunmin_paused_text())
         return
 
     if text == "/주사위":
