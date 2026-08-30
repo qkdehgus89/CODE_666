@@ -154,7 +154,7 @@ ADADA_CHANT_REPLY = """.　　　　\\　　　|
 　　╱　　　 　　\\　　╲
 　　　　　/　|　　\\\\
 　　　　 　　|"""
-AREUM_RECITE_REPLY = "🎀◌ ° 기므앙 아다다! ୨ ꜥ ୧"
+AREUM_RECITE_REPLY = "🎀◌ ° 기므앙 아다다.ᐟ ୨ ꜥ ୧"
 
 # =========================
 # 권한
