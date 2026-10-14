@@ -14965,7 +14965,7 @@ def code666_member_list_text():
     cur.execute("""
     SELECT
         u.user_id,
-        COALESCE(gp.user_name, u.user_name) AS user_name,
+        u.user_name AS user_name,
         COALESCE(gp.gender, u.gender, 'unknown') AS gender,
         COALESCE(gp.is_nomicl, u.is_nomicl, 0) AS is_nomicl,
         gp.profile_age,
@@ -16019,6 +16019,15 @@ def handle(event):
     public_notices = []
 
     if user_id:
+        if source_id == COUNT_SOURCE_ID:
+            try:
+                restored, _ = restore_deleted_user_by_original_id(user_id, source_id)
+                if restored:
+                    public_notices.append(
+                        f"🔔 {display_nickname(user_name)}님이 다시 입장하셨습니다.\n유저 정보를 자동으로 복구했어요."
+                    )
+            except Exception as e:
+                log_error("MESSAGE_AUTO_RESTORE_ERROR", e)
         upsert_user(user_id, user_name, source_id)
 
     # 메인방 + 운영진방 둘 다 마디수/로그 카운트
