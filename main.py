@@ -17731,7 +17731,24 @@ if MemberLeftEvent is not None:
                 left_user_id = getattr(member, "user_id", None)
 
                 if left_user_id:
-                    set_user_active_by_id(left_user_id, 0)
+                    if source_id != COUNT_SOURCE_ID:
+                        continue
+                    user = get_user_by_id(left_user_id)
+                    if user and is_active_known_user(left_user_id):
+                        snapshot = snapshot_user_data(left_user_id)
+                        conn = db()
+                        try:
+                            conn.execute("""
+                                INSERT INTO deleted_users
+                                (original_user_id, user_name, deleted_by, deleted_at, snapshot_json)
+                                VALUES (?, ?, ?, ?, ?)
+                            """, (left_user_id, user["user_name"], "automatic_leave",
+                                  now_str(), json.dumps(snapshot, ensure_ascii=False)))
+                            conn.execute("UPDATE users SET is_active = 0, updated_at = ? WHERE user_id = ?",
+                                         (now_str(), left_user_id))
+                            conn.commit()
+                        finally:
+                            conn.close()
                     print("MEMBER LEFT:", source_id, left_user_id)
 
         except Exception as e:
@@ -17757,6 +17774,14 @@ if MemberJoinedEvent is not None:
                         restored, restore_detail = restore_deleted_user_by_original_id(joined_user_id, source_id)
                         if restored:
                             print("AUTO_RESTORE_DELETED_USER:", restore_detail)
+                            notices.append(f"🔔 {display_nickname(deleted_stats['user_name'])}님이 다시 입장하셨습니다.\n유저 정보를 자동으로 복구했어요.")
+
+                        try:
+                            with ApiClient(config) as api_client:
+                                profile = check_line_member_profile(MessagingApi(api_client), source_id, joined_user_id)
+                            upsert_user(joined_user_id, profile.display_name, source_id)
+                        except Exception as e:
+                            log_error("MEMBER_JOIN_PROFILE_ERROR", e)
 
                     if source_id in auth_source_ids() and not is_active_known_user(joined_user_id):
                         caution_row = find_caution_user_by_original_id(joined_user_id)
@@ -17770,7 +17795,8 @@ if MemberJoinedEvent is not None:
                                 notices.append(rejoin_notice_text(deleted_row, source_id))
 
                     # 닉네임은 첫 메시지 때 최신화되지만, 방 위치는 입장 이벤트로도 기록합니다.
-                    set_user_active_source_by_id(joined_user_id, 1, source_id)
+                    if source_id == COUNT_SOURCE_ID:
+                        set_user_active_source_by_id(joined_user_id, 1, source_id)
                     print("MEMBER JOINED:", source_id, joined_user_id)
 
             reply_token = getattr(event, "reply_token", None)
