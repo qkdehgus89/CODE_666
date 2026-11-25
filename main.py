@@ -142,7 +142,6 @@ SPECIAL_CHAT_REPLY_MESSAGES = [
     "넌 못벗어나 가오해줘",
     "아헤가오해줘",
 ]
-RANDOM_CHAT_REPLY_TARGETS = {"으앙"}
 MEAT_SHOUT_REPLY_TARGETS = {"미트"}
 AREUM_RECITE_REPLY_TARGETS = {"아름"}
 BULJA_IMAGE_REPLY_TARGETS = {"불자"}
@@ -5107,18 +5106,6 @@ def nickname_matches_any_target(user_name, targets):
     return bool(tokens & targets or any(target in normalized_name for target in targets))
 
 
-def random_chat_reply_for_user(user_name):
-    if not nickname_matches_any_target(user_name, RANDOM_CHAT_REPLY_TARGETS):
-        return None
-
-    roll = random.randint(1, 1000)
-    if roll <= 5:
-        return "아! 불꽃아다다!!!"
-    if roll <= 10:
-        return "(아 아다다)"
-    return None
-
-
 def meat_shout_reply_for_user(user_name, text_value):
     text_value = str(text_value or "").strip()
     is_meat_shout = text_value == "외쳐라" and nickname_matches_any_target(user_name, MEAT_SHOUT_REPLY_TARGETS)
@@ -5149,7 +5136,7 @@ def special_chat_reply_for_user(user_name, text_value):
         messages = special_chat_reply_messages()
         return random.choice(messages) if messages else None
 
-    return random_chat_reply_for_user(user_name)
+    return None
 
 
 def row_value(row, key, default=None):
